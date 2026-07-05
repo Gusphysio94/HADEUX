@@ -718,7 +718,7 @@ function render(){
   const main=document.getElementById('main');
   const routes={dash:renderDash,foyer:renderFoyer,depenses:renderDepenses,
     rev1:()=>renderRevenus(0), rev2:()=>renderRevenus(1),
-    retro:renderRetro, prevu:renderPrevu, bilan:renderBilan, commun:renderCommun,reglages:renderReglages};
+    retro:renderRetro, prevu:renderPrevu, bilan:renderBilan, commun:renderCommun,reglages:renderReglages, import:renderImport};
   main.innerHTML = (routes[VIEW]||renderDash)();
   wireView();
 }
@@ -923,10 +923,12 @@ function renderDepenses(){
       <div class="filters">
         ${filterBtn('all','Tout')}${filterBtn('commune','Communes')}${filterBtn('perso','Perso')}
       </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn ghost sm" id="dupPrev">⧉ Copier récurrentes</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost sm" id="csvBtn2">🏦 Importer CSV</button>
+        <button class="btn ghost sm" id="dupPrev">⧉ Récurrentes</button>
         <button class="btn primary sm" data-add="depense"><span class="plus">+</span> Dépense</button>
       </div>
+      <input type="file" id="csvFile" accept=".csv,text/csv,text/plain" style="display:none">
     </div>
     ${budgetsCard()}
     <div class="card">${expenseList(list)}</div>
@@ -1725,6 +1727,8 @@ function renderReglages(){
         <button class="btn ghost sm" id="pdfGlobalBtn">Générer</button></div>
       <div class="setrow"><div><div class="st">📄 Rétrocession (PDF)</div><div class="sd">Décompte annuel des revenus kiné et rétrocession à verser</div></div>
         <button class="btn ghost sm" id="pdfRetroBtn">Générer</button></div>
+      <div class="setrow"><div><div class="st">🏦 Importer un relevé bancaire (CSV)</div><div class="sd">Dépose l'export de ta banque : les dépenses sont détectées, tu les classes puis importes</div></div>
+        <button class="btn ghost sm" id="csvBtn">Importer un relevé</button><input type="file" id="csvFile" accept=".csv,text/csv,text/plain" style="display:none"></div>
       <div class="setrow"><div><div class="st">Exporter</div><div class="sd">Télécharge une sauvegarde (fichier .json)</div></div>
         <button class="btn ghost sm" id="exportBtn">⬇ Exporter</button></div>
       <div class="setrow"><div><div class="st">Importer</div><div class="sd">Restaure une sauvegarde</div></div>
@@ -2060,6 +2064,9 @@ function wireView(){
   const pr1=document.getElementById('pdfRetroBtn'); if(pr1) pr1.onclick=exportReportRetro;
   const pr2=document.getElementById('pdfRetroBtn2'); if(pr2) pr2.onclick=exportReportRetro;
   const im=document.getElementById('importBtn'); if(im) im.onclick=()=>document.getElementById('importFile').click();
+  ['csvBtn','csvBtn2'].forEach(id=>{ const b=document.getElementById(id); if(b) b.onclick=()=>document.getElementById('csvFile').click(); });
+  const cf=document.getElementById('csvFile'); if(cf) cf.onchange=startImportFile;
+  if(VIEW==='import') wireImport();
   const imf=document.getElementById('importFile'); if(imf) imf.onchange=importData;
   const rs=document.getElementById('resetBtn'); if(rs) rs.onclick=()=>{if(confirm('Tout effacer et repartir de zéro ?')){S=DEFAULT_STATE();save();render();}};
 }
@@ -2187,6 +2194,133 @@ function importData(e){
   const r=new FileReader();
   r.onload=()=>{try{const s=JSON.parse(r.result);if(s.members&&s.expenses){S=s;S.ui=S.ui||{month:monthKey(todayISO())};save();render();alert('Données importées ✓');}else alert('Fichier invalide');}catch(err){alert('Fichier illisible');}};
   r.readAsText(f);
+}
+
+/* ============================================================
+   IMPORT DE RELEVÉ BANCAIRE (CSV) — détection colonnes + revue
+============================================================ */
+let IMPORT=null;
+function splitCSVLine(line, d){ const out=[]; let cur='', q=false;
+  for(let i=0;i<line.length;i++){ const c=line[i];
+    if(c==='"'){ if(q&&line[i+1]==='"'){cur+='"';i++;} else q=!q; }
+    else if(c===d && !q){ out.push(cur); cur=''; } else cur+=c; }
+  out.push(cur); return out.map(s=>s.trim().replace(/^"|"$/g,'')); }
+function parseCSV(text){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length) return [];
+  const h=lines[0];
+  const d=(h.split(';').length>=h.split(',').length)?(h.split(';').length>=h.split('\t').length?';':'\t'):(h.split(',').length>=h.split('\t').length?',':'\t');
+  return lines.map(l=>splitCSVLine(l,d));
+}
+function parseAmount(s){ if(s==null) return NaN; s=String(s).replace(/\s|€|EUR/gi,'');
+  let neg=/^-|-$|^\(.*\)$/.test(s); s=s.replace(/[()\-]/g,''); if(!s) return NaN;
+  if(s.indexOf(',')>-1 && s.indexOf('.')>-1){ if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',','.'); else s=s.replace(/,/g,''); }
+  else if(s.indexOf(',')>-1) s=s.replace(',','.');
+  const n=parseFloat(s); return isNaN(n)?NaN:(neg?-n:n); }
+function parseDateAny(s){ s=String(s||'').trim(); let m;
+  if(m=s.match(/(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/)) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  if(m=s.match(/(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/)) return `${m[3]}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;
+  if(m=s.match(/(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2})\b/)) return `20${m[3]}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;
+  return null; }
+const CATRULES=[['courses',['carrefour','delhaize','colruyt','aldi','lidl','okay','spar','intermarch','albert heijn','supermarch','proxy','cora','match']],['resto',['restaurant','resto','mcdo','mcdonald','quick','burger','pizz','sushi','deliveroo','uber eats','takeaway','frit','brasserie','tavern','cafe','café','bar ']],['transport',['shell','total','esso','q8','texaco','station','sncb','nmbs','de lijn','tec ','stib','mivb','parking','uber','bolt','taxi','carburant','lukoil']],['abo',['netflix','spotify','disney','amazon prime','youtube','icloud','proximus','orange','telenet','base ','scarlet','abonnement','subscription']],['factures',['engie','luminus','eneco','mega','totalenergies','eau','vivaqua','swde','facture','internet']],['sante',['pharmac','pharma','mutuali','mutuelle','partenamut','solidaris','docteur','hopital','hôpital','dentiste','kine','kiné','medic']],['loisirs',['cinema','cinéma','kinepolis','fitness','basic-fit','basic fit','decathlon','décathlon','fnac','steam','playstation','nintendo']],['shopping',['zalando','zara','h&m','amazon','bol.com','coolblue','mediamarkt','ikea','action','primark','veritas']],['enfants',['creche','crèche','ecole','école','one','jouet','dreamland']],['voyages',['booking','airbnb','ryanair','brussels airlines','tui','hotel','hôtel','expedia']],['loyer',['loyer','huur','syndic','immo']]];
+function guessCategory(label){ const l=(label||'').toLowerCase(); for(const [c,ks] of CATRULES){ if(ks.some(k=>l.includes(k))) return c; } return 'divers'; }
+function detectColumns(rows){
+  const header=rows[0]||[]; const data=rows.slice(1); const ncol=Math.max(...rows.map(r=>r.length));
+  const H=header.map(h=>String(h).toLowerCase());
+  const fh=keys=>{ for(let i=0;i<H.length;i++) if(keys.some(k=>H[i].includes(k))) return i; return -1; };
+  let di=fh(['date compt','date d','date','datum','uitvoerdatum']);
+  let ai=fh(['montant','bedrag','amount','somme','débit','debet']);
+  let li=fh(['communication','description','libell','mededeling','détail','detail','contrepartie','tegenpartij','naam','omschrijving','begunstigde']);
+  if(di<0){ for(let c=0;c<ncol;c++){ if(data.filter(r=>parseDateAny(r[c])).length>data.length*0.5){di=c;break;} } }
+  if(ai<0){ let best=-1,bs=-1; for(let c=0;c<ncol;c++){ const nums=data.filter(r=>!isNaN(parseAmount(r[c]))).length, negs=data.filter(r=>parseAmount(r[c])<0).length; if(nums>data.length*0.5){ const sc=nums+negs*3; if(sc>bs){bs=sc;best=c;} } } ai=best; }
+  if(li<0){ let best=-1,bl=-1; for(let c=0;c<ncol;c++){ if(c===di||c===ai)continue; const avg=data.reduce((s,r)=>s+((r[c]||'').length),0)/(data.length||1); if(avg>bl){bl=avg;best=c;} } li=best; }
+  const hasHeader = di>=0 ? !parseDateAny(header[di]) : true;
+  return {date:di, amount:ai, label:li, hasHeader};
+}
+function buildImportItems(){
+  if(!IMPORT) return []; const {rows,map}=IMPORT; const start=map.hasHeader?1:0; const items=[];
+  for(let i=start;i<rows.length;i++){ const r=rows[i];
+    const date=parseDateAny(r[map.date]); const amount=parseAmount(r[map.amount]);
+    const label=String(r[map.label]||'').replace(/\s+/g,' ').trim();
+    if(!date||isNaN(amount)||amount>=0) continue;   // dépenses uniquement (débits)
+    items.push({date, amount, label, include:true, cat:guessCategory(label), scope:'commune'}); }
+  return items;
+}
+function startImportFile(e){ const f=e.target.files[0]; if(!f) return; const rd=new FileReader();
+  rd.onload=()=>{ try{ const rows=parseCSV(String(rd.result||'')); if(rows.length<2){alert('Fichier vide ou illisible.');return;}
+    const map=detectColumns(rows); IMPORT={filename:f.name,rows,map,account:'commun',items:[]}; IMPORT.items=buildImportItems(); VIEW='import'; render();
+  }catch(err){ alert('Impossible de lire ce fichier CSV.'); } };
+  rd.readAsText(f); e.target.value='';
+}
+function doImport(){
+  if(!IMPORT) return; const acc=IMPORT.account; let n=0;
+  IMPORT.items.filter(it=>it.include).forEach(it=>{
+    const scope=it.scope;
+    const owner = (acc==='commun') ? S.members[0].id : acc;
+    const paidBy = scope==='perso' ? owner : acc;
+    S.expenses.push({id:uid(), amount:Math.abs(it.amount), label:it.label||cat(it.cat).name, date:it.date,
+      categoryId:it.cat, scope, paidBy, owner: scope==='perso'?owner:null, recurring:false, src:'csv'});
+    n++;
+  });
+  save(); IMPORT=null; VIEW='depenses'; render(); alert(n+' dépense(s) importée(s) ✓');
+}
+function renderImport(){
+  if(!IMPORT) return renderDash();
+  const items=IMPORT.items, ncol=Math.max(...IMPORT.rows.map(r=>r.length)), hdr=IMPORT.rows[0]||[];
+  const colOpts=sel=>Array.from({length:ncol}).map((_,i)=>`<option value="${i}" ${sel===i?'selected':''}>Col ${i+1}${IMPORT.map.hasHeader&&hdr[i]?' · '+esc(String(hdr[i]).slice(0,18)):''}</option>`).join('');
+  const nInc=items.filter(it=>it.include).length, total=items.filter(it=>it.include).reduce((s,it)=>s+Math.abs(it.amount),0);
+  return `<section class="view grid">
+    <div class="card hero" style="background:linear-gradient(160deg,#3C6E8F,#294f68)">
+      <div class="eyebrow">Import de relevé bancaire</div>
+      <div class="headline" style="font-size:23px"><b id="impCount">${nInc}</b> dépense(s) · <b id="impTotal">${EUR0(total)}</b></div>
+      <div class="sub">${esc(IMPORT.filename||'')} — vérifie, classe, puis importe.</div>
+    </div>
+    <div class="card"><h2 class="title">Réglages</h2>
+      <div style="padding:14px 22px 20px;display:grid;gap:14px">
+        <div class="field" style="margin:0"><label>Ce relevé est le compte de…</label>
+          <select data-impacc>${[['commun','Compte commun']].concat(S.members.map(m=>[m.id,m.name])).map(a=>`<option value="${a[0]}" ${IMPORT.account===a[0]?'selected':''}>${esc(a[1])}</option>`).join('')}</select></div>
+        <div class="field two" style="margin:0">
+          <div class="field"><label>Colonne Date</label><select data-impmap="date">${colOpts(IMPORT.map.date)}</select></div>
+          <div class="field"><label>Colonne Montant</label><select data-impmap="amount">${colOpts(IMPORT.map.amount)}</select></div>
+        </div>
+        <div class="field" style="margin:0"><label>Colonne Libellé</label><select data-impmap="label">${colOpts(IMPORT.map.label)}</select></div>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 18px 0;flex-wrap:wrap;gap:8px">
+        <h2 style="font-size:18px">Dépenses détectées (${items.length})</h2>
+        <div style="display:flex;gap:6px"><button class="btn ghost sm" data-impall="1">Tout</button><button class="btn ghost sm" data-impall="0">Rien</button></div>
+      </div>
+      ${items.length?`<div class="list">${items.map((it,i)=>`<div class="row">
+        <input type="checkbox" ${it.include?'checked':''} data-impchk="${i}" style="width:18px;height:18px;flex:none;accent-color:var(--green)">
+        <div class="main"><div class="l1">${esc(it.label||'—')}</div>
+        <div class="l2">${fmtDate(it.date)} · <select data-impcat="${i}" style="border:1px solid var(--line);background:var(--surface2);border-radius:6px;padding:2px 4px;font-size:11px">${S.categories.map(c=>`<option value="${c.id}" ${it.cat===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div></div>
+        <button class="tag ${it.scope==='commune'?'commune':'perso'}" data-impscope="${i}" style="border:none;cursor:pointer">${it.scope==='commune'?'Commune':'Perso'}</button>
+        <div class="amt">${EUR(Math.abs(it.amount))}</div>
+      </div>`).join('')}</div>`
+      :emptyState('🗂️','Aucune dépense détectée','Ajuste le mapping des colonnes ci-dessus.')}
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn ghost" data-impcancel style="flex:1;justify-content:center">Annuler</button>
+      <button class="btn primary" data-impdo style="flex:2;justify-content:center">Importer les dépenses cochées</button>
+    </div>
+  </section>`;
+}
+
+function refreshImpCounts(){ if(!IMPORT)return; const inc=IMPORT.items.filter(it=>it.include);
+  const c=document.getElementById('impCount'), t=document.getElementById('impTotal');
+  if(c)c.textContent=inc.length; if(t)t.textContent=EUR0(inc.reduce((s,it)=>s+Math.abs(it.amount),0)); }
+function wireImport(){
+  const rr=()=>{ const y=window.scrollY; render(); window.scrollTo(0,y); };
+  const acc=document.querySelector('[data-impacc]'); if(acc) acc.onchange=()=>{ IMPORT.account=acc.value; };
+  document.querySelectorAll('[data-impmap]').forEach(s=>s.onchange=()=>{ IMPORT.map[s.dataset.impmap]=+s.value;
+    const hdr=IMPORT.rows[0]||[]; IMPORT.map.hasHeader=!parseDateAny(hdr[IMPORT.map.date]); IMPORT.items=buildImportItems(); rr(); });
+  document.querySelectorAll('[data-impchk]').forEach(c=>c.onchange=()=>{ IMPORT.items[+c.dataset.impchk].include=c.checked; refreshImpCounts(); });
+  document.querySelectorAll('[data-impcat]').forEach(s=>s.onchange=()=>{ const i=+s.dataset.impcat; IMPORT.items[i].cat=s.value; const em=s.closest('.row').querySelector('.em'); if(em) em.textContent=cat(s.value).e; });
+  document.querySelectorAll('[data-impscope]').forEach(b=>b.onclick=()=>{ const it=IMPORT.items[+b.dataset.impscope]; it.scope=it.scope==='commune'?'perso':'commune'; b.textContent=it.scope==='commune'?'Commune':'Perso'; b.className='tag '+(it.scope==='commune'?'commune':'perso'); });
+  document.querySelectorAll('[data-impall]').forEach(b=>b.onclick=()=>{ const v=b.dataset.impall==='1'; IMPORT.items.forEach(it=>it.include=v); rr(); });
+  const cx=document.querySelector('[data-impcancel]'); if(cx) cx.onclick=()=>{ IMPORT=null; VIEW='depenses'; render(); };
+  const dx=document.querySelector('[data-impdo]'); if(dx) dx.onclick=doImport;
 }
 
 /* ---------- Navigation ---------- */
