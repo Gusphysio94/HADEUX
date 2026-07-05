@@ -29,11 +29,11 @@
       var(--bg);
     color:var(--ink);-webkit-font-smoothing:antialiased;
     font-variant-numeric:tabular-nums;
-    line-height:1.5;
+    line-height:1.5;overflow-x:hidden;
   }
   .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
   h1,h2,h3{font-family:'Fraunces',Georgia,serif;font-weight:500;letter-spacing:-.01em;line-height:1.1}
-  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   input,select{font-family:inherit;font-size:15px;color:var(--ink)}
   ::selection{background:var(--green);color:#fff}
 
@@ -77,8 +77,8 @@
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
     box-shadow:var(--shadow)}
   .grid{display:grid;gap:16px}
-  section.view{animation:fade .35s ease both}
-  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  section.view{animation:fade .13s ease-out both}
+  @keyframes fade{from{opacity:.4}to{opacity:1}}
 
   /* Hero settlement */
   .hero{padding:26px 26px 24px;position:relative;overflow:hidden;
@@ -328,12 +328,51 @@
     .rp-sign{ margin-top:26px; display:flex; justify-content:space-between; gap:40px; }
     .rp-sign div{ flex:1; border-top:1px solid #999; padding-top:5px; font-size:10px; color:#666; }
   }
-  @media(max-width:560px){
-    .stats{grid-template-columns:1fr 1fr}
+  @media(max-width:640px){
+    .app{padding:0 12px 100px}
+    header.top{padding:16px 2px 12px;gap:12px}
+    .brand .mark{width:40px;height:40px}
+    .brand h1{font-size:20px}
+    .brand p{font-size:11.5px}
+    .monthbar{width:100%;justify-content:space-between}
+    .monthbar .label{min-width:0;flex:1;font-size:13.5px}
+    nav.tabs{gap:3px;padding:5px}
+    nav.tabs button{font-size:12.5px;padding:7px 10px;gap:5px}
+    .toolbar{margin:16px 0}
+    section.view{gap:12px}
+    .grid{gap:12px}
+    .stats{grid-template-columns:1fr 1fr;gap:10px}
+    .stat{padding:14px 14px 13px}
+    .stat .k{font-size:11.5px}
+    .stat .v{font-size:20px;margin-top:6px}
     .cols{grid-template-columns:1fr}
     .persons{grid-template-columns:1fr}
-    .brand h1{font-size:21px}
-    .hero .headline{font-size:23px}
+    .hero{padding:20px 18px}
+    .hero .headline{font-size:22px}
+    .hero .eyebrow{font-size:11px}
+    .card h2.title{font-size:17px;padding:16px 16px 0}
+    .card .sub-t{padding:2px 16px 0;font-size:12.5px}
+    .list{padding:6px 6px 10px}
+    .row{padding:11px 10px;gap:11px}
+    .row .em{width:34px;height:34px;font-size:15px}
+    .row .amt{font-size:16px}
+    .wf,.bars,.brackets,.split{padding-left:16px;padding-right:16px}
+    .subnav button{font-size:12.5px;padding:8px 8px;gap:4px}
+    .kpi3 .k{padding:11px 6px}
+    .kpi3 .k .lab{font-size:9px}
+    .kpi3 .k .val{font-size:15px}
+    .person{padding:16px}
+    .setrow{padding:14px 16px}
+    .modal .mhead{padding:20px 18px 6px}
+    .modal form{padding:12px 18px 22px}
+    .wkgrid{padding:14px 14px 4px}
+    .barchart,.barchart2{min-width:0}
+    .chartbox{padding-left:8px;padding-right:8px}
+  }
+  @media(max-width:400px){
+    .stats{grid-template-columns:1fr}
+    .brand p{display:none}
+    .hero .headline{font-size:20px}
   }
 </style>
 
