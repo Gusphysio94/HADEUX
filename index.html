@@ -583,6 +583,7 @@ function save(){
    Auth par mot de passe partagé + données partagées (1 ligne), sondage.
 ============================================================ */
 let sb=null, cloudReady=false, cloudUser=null, cloudLastTs=null, cloudPushTimer=null;
+let cloudSynced=false, cloudLastSyncAt=null;   // cloudSynced : on a confirmé le cloud avant d'écrire (anti-écrasement)
 function cloudConfigured(){ return !!(CLOUD.url && CLOUD.anonKey && window.supabase); }
 function setSyncStatus(t){ const el=document.getElementById('syncDot'); if(!el) return;
   el.className='syncdot '+t;
@@ -609,7 +610,7 @@ async function cloudPull(){
   try{
     const {data,error}=await sb.from(CLOUD.table).select('data,updated_at').eq('id',CLOUD.rowId).maybeSingle();
     if(error) throw error;
-    if(!data){ await cloudPushNow(); return; }   // première fois : on pousse l'état local
+    if(!data){ cloudSynced=true; await cloudPushNow(); return; }   // aucune donnée cloud : on sème l'état local
     const busy=document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName||'');
     const modalOpen=document.getElementById('overlay').classList.contains('show');
     if(data.updated_at!==cloudLastTs && data.data && !busy && !modalOpen){
@@ -617,11 +618,14 @@ async function cloudPull(){
       try{localStorage.setItem(LS_KEY,JSON.stringify(S));}catch(e){}
       render();
     }
+    cloudSynced=true;                 // ✅ on a bien lu le cloud : l'écriture est désormais autorisée
+    cloudLastSyncAt=new Date();
     setSyncStatus('synced');
   }catch(e){ setSyncStatus('offline'); }
 }
 function cloudPush(){
-  if(!cloudReady||!sb) return;
+  // Sécurité anti-écrasement : tant qu'on n'a pas confirmé le contenu cloud, on n'écrit PAS
+  if(!cloudReady||!sb||!cloudSynced) return;
   setSyncStatus('saving');
   clearTimeout(cloudPushTimer); cloudPushTimer=setTimeout(cloudPushNow, 700);
 }
@@ -632,6 +636,7 @@ async function cloudPushNow(){
     const {data,error}=await sb.from(CLOUD.table).upsert({id:CLOUD.rowId,data:S,updated_at:ts}).select('updated_at').maybeSingle();
     if(error) throw error;
     cloudLastTs=(data&&data.updated_at)||ts;
+    cloudLastSyncAt=new Date();
     setSyncStatus('synced');
   }catch(e){ setSyncStatus('offline'); }
 }
@@ -1699,7 +1704,7 @@ function renderCommun(){
 function renderReglages(){
   return `<section class="view grid">
     ${cloudConfigured()
-      ? `<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green)"><span class="i">☁️</span><div><b>Synchronisation en ligne active.</b> ${cloudUser?`Connecté${cloudUser.email?' en tant que '+esc(cloudUser.email):''}. Tes données sont partagées et synchronisées entre appareils.`:'En attente de connexion…'} ${cloudUser?'<button class="btn ghost sm" id="signOutBtn" style="margin-top:8px">Se déconnecter</button>':''}</div></div>`
+      ? `<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green)"><span class="i">☁️</span><div><b>Synchronisation en ligne active.</b> ${cloudUser?`Connecté${cloudUser.email?' en tant que '+esc(cloudUser.email):''}. Tes données sont sauvegardées dans le cloud et synchronisées entre appareils.`:'En attente de connexion…'}${cloudLastSyncAt?` <span style="opacity:.8">· dernière sauvegarde à ${cloudLastSyncAt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})} ✓</span>`:''} ${cloudUser?'<button class="btn ghost sm" id="signOutBtn" style="margin-top:8px">Se déconnecter</button>':''}</div></div>`
       : `<div class="banner"><span class="i">☁️</span><div><b>Mode local.</b> L'app fonctionne sur cet appareil uniquement. Pour l'accès à deux synchronisé (Supabase), renseigne <code>CLOUD.url</code> et <code>CLOUD.anonKey</code> en haut du fichier, puis déploie. Pense à <b>exporter</b> tes données avant.</div></div>`}
 
     <div class="card">
@@ -2068,7 +2073,11 @@ function wireView(){
   const cf=document.getElementById('csvFile'); if(cf) cf.onchange=startImportFile;
   if(VIEW==='import') wireImport();
   const imf=document.getElementById('importFile'); if(imf) imf.onchange=importData;
-  const rs=document.getElementById('resetBtn'); if(rs) rs.onclick=()=>{if(confirm('Tout effacer et repartir de zéro ?')){S=DEFAULT_STATE();save();render();}};
+  const rs=document.getElementById('resetBtn'); if(rs) rs.onclick=()=>{
+    if(!confirm('⚠️ Tout effacer et repartir de zéro ?\n\nCela remplacera AUSSI les données en ligne (partagées avec Ju). Une sauvegarde .json va d\'abord être téléchargée.')) return;
+    try{ exportData(); }catch(e){}
+    if(confirm('Sauvegarde téléchargée. Confirmer définitivement la remise à zéro ?')){ S=DEFAULT_STATE(); save(); render(); }
+  };
 }
 
 function copyRecurring(){
