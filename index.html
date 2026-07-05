@@ -277,6 +277,11 @@
     background:var(--green);color:#fff;font-size:28px;display:grid;place-items:center;
     box-shadow:0 8px 24px rgba(46,93,75,.4);transition:.18s}
   .fab:hover{transform:scale(1.06) translateY(-2px)}
+  /* Sous-onglets Revenus */
+  .subnav{display:flex;gap:5px;background:var(--surface);border:1px solid var(--line);border-radius:100px;padding:5px;box-shadow:var(--shadow)}
+  .subnav button{flex:1;padding:9px 12px;border-radius:100px;font-weight:700;font-size:13.5px;color:var(--muted);transition:.15s;display:flex;align-items:center;justify-content:center;gap:6px}
+  .subnav button:hover{color:var(--ink)}
+  .subnav button.on{background:var(--ink);color:var(--surface);box-shadow:0 3px 10px rgba(36,34,25,.25)}
   /* Synchro & connexion */
   .syncdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:4px;vertical-align:middle;background:#bbb}
   .syncdot.synced{background:#3B7159;box-shadow:0 0 0 3px rgba(59,113,89,.18)}
@@ -495,6 +500,7 @@ const DEFAULT_STATE = () => ({
 let S = load();
 let VIEW = 'dash';
 let DEP_FILTER = 'all';
+let REV_SUB = 'apercu';   // sous-onglet actif des Revenus : apercu | annuel | mensuel
 
 // Normalise/complète un état (utilisé au chargement local ET pour les données reçues du cloud)
 function migrate(s){
@@ -1112,8 +1118,11 @@ function renderRevenus(idx){
     <option value="2025" ${S.fiscalYear==='2025'?'selected':''} style="color:#000">Revenus 2025</option>
     <option value="2026" ${S.fiscalYear==='2026'?'selected':''} style="color:#000">Revenus 2026</option></select>`;
 
-  return `<section class="view grid">
-    <div class="card hero" style="background:linear-gradient(160deg,${m.color},${shade(m.color,-22)})">
+  const sub=REV_SUB;
+  const ent=entriesNetEstimate(mid);
+  const cm=curMonth(); const cb=ent.empty?null:ent.perMonth[cm]; const curBrut=cb?(cb.sal+cb.ind):0; const curNet=ent.empty?0:curBrut*(ent.rate||0);
+
+  const hero = `<div class="card hero" style="background:linear-gradient(160deg,${m.color},${shade(m.color,-22)})">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
         <div class="eyebrow">Revenus & fiscalité · ${esc(P.annee)}</div>
         ${yearSel}
@@ -1122,12 +1131,40 @@ function renderRevenus(idx){
       <div class="sub">soit <b style="color:#F0C863">${EUR0(r.net/12)}/mois</b> en poche, après cotisations sociales et impôts.</div>
       <div class="settle-actions">
         <span class="chip">Brut <b>${EUR0(r.entrees)}</b></span>
-        <span class="chip">Prélèvements <b>${EUR0(r.entrees-r.net-(pr.fraisPro||0))}</b></span>
         <span class="chip">Taux global <b>${(tauxPrel*100).toFixed(1)}%</b></span>
-        ${qcInfo.applies ? `<span class="chip">👫 Quotient conjugal <b>−${EUR0(qcInfo.saving)}</b> d'impôt</span>`:''}
+        ${ent.empty?'':`<span class="chip">Ce mois <b>${EUR0(curNet)}</b> net</span>`}
+        ${qcInfo.applies ? `<span class="chip">👫 QC <b>−${EUR0(qcInfo.saving)}</b></span>`:''}
       </div>
-    </div>
+    </div>`;
 
+  const subnav = `<div class="subnav">
+      <button data-revsub="apercu" class="${sub==='apercu'?'on':''}">◔ Vue d'ensemble</button>
+      <button data-revsub="annuel" class="${sub==='annuel'?'on':''}">📅 Annuel</button>
+      <button data-revsub="mensuel" class="${sub==='mensuel'?'on':''}">🗓 Mensuel</button>
+    </div>`;
+
+  const qcBanner = qcInfo.applies?`<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green)"><span class="i">👫</span><div>Quotient conjugal : <b>${EUR0(qcInfo.saving)}</b> d'impôt économisé pour le couple (part attribuée à ${esc(qcInfo.lowName)}).</div></div>`:'';
+
+  const secApercu = `
+    <div class="stats">
+      ${stat('Net annuel', EUR0(r.net), EUR0(r.net/12)+' /mois','accent')}
+      ${stat('Brut annuel', EUR0(r.entrees), retroLinked?'rétro + compléments':'salaire + indép.','')}
+      ${stat('Taux de prélèvement', (tauxPrel*100).toFixed(0)+'%','cotisations + impôts','')}
+      ${stat('Net estimé ce mois', ent.empty?'—':EUR0(curNet), ent.empty?'ajoute des entrées (Mensuel)':'selon tes entrées','')}
+    </div>
+    <div class="card"><h2 class="title">En bref</h2>
+      <div class="wf">
+        <div class="r"><span class="lbl">Brut annuel</span><span class="v">${EUR(r.entrees)}</span></div>
+        <div class="r sub"><span class="lbl">Cotisations sociales + frais pro</span><span class="v minus">−${EUR(r.ssEmp+r.cot.total+r.fraisTotal)}</span></div>
+        <div class="r sub"><span class="lbl">Impôts${r.majoration>0?' (+ majoration VA)':''}</span><span class="v minus">−${EUR(r.impotAvecMaj)}</span></div>
+        <div class="r tot"><span class="lbl">Net en poche / an</span><span class="v pos">${EUR(r.net)}</span></div>
+        <div class="r" style="border:none;padding-top:4px"><span class="lbl" style="font-size:12.5px">soit par mois</span><span class="v">${EUR(r.net/12)}</span></div>
+      </div>
+      <div class="infoNote">Modifie tes montants dans l'onglet <b>Annuel</b> · saisis tes revenus au fil des mois dans <b>Mensuel</b>.</div>
+    </div>
+    ${qcBanner}`;
+
+  const secAnnuel = `
     <div class="card">
       <h2 class="title">Vos revenus de l'année</h2>
       <p class="sub-t">Montants annuels bruts. Ils servent au calcul brut → net.</p>
@@ -1138,7 +1175,7 @@ function renderRevenus(idx){
           <div class="field"><label>🩺 Recettes indépendant (brut)${retroLinked?` <span style="font-weight:400;text-transform:none;color:var(--green)">· auto rétro + compléments</span>`:''}</label>
             <div class="amount-input"><input type="number" step="100" min="0" value="${retroLinked?Math.round(r.recettes):(pr.recettes||'')}" data-prof="recettes" data-mid="${mid}" placeholder="0" ${retroLinked?'disabled style="font-size:22px;padding:12px 40px 12px 14px;opacity:.7"':'style="font-size:22px;padding:12px 40px 12px 14px"'}><span class="cur" style="font-size:19px">€</span></div></div>
         </div>
-        ${retroLinked?`<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green);margin:0"><span class="i">🔗</span><div>Recettes = <b>rétrocession kiné</b> (${EUR0(r.retroYear)}) ${r.recettes>r.retroYear?`+ <b>revenus complémentaires</b> (${EUR0(r.recettes-r.retroYear)}) `:''}récupérées automatiquement pour ${S.fiscalYear}, et la <b>rétrocession (${(S.retro.rate*100).toFixed(0)}%) déduite en frais pro</b>. Ajoute tes compléments plus bas (« + Revenu complémentaire »).</div></div>`:''}
+        ${retroLinked?`<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green);margin:0"><span class="i">🔗</span><div>Recettes = <b>rétrocession kiné</b> (${EUR0(r.retroYear)}) ${r.recettes>r.retroYear?`+ <b>revenus complémentaires</b> (${EUR0(r.recettes-r.retroYear)}) `:''}récupérées automatiquement pour ${S.fiscalYear}, et la <b>rétrocession (${(S.retro.rate*100).toFixed(0)}%) déduite en frais pro</b>. Ajoute tes compléments dans l'onglet <b>Mensuel</b>.</div></div>`:''}
         <div class="field two" style="margin:0">
           <div class="field"><label>🧾 ${retroLinked?'Autres frais pro (hors rétro)':'Frais professionnels réels'} / an</label>
             <div class="amount-input"><input type="number" step="100" min="0" value="${pr.fraisPro||''}" data-prof="fraisPro" data-mid="${mid}" placeholder="0" style="font-size:22px;padding:12px 40px 12px 14px"><span class="cur" style="font-size:19px">€</span></div></div>
@@ -1179,10 +1216,10 @@ function renderRevenus(idx){
       </div>
     </div>
 
-    ${r.recettes>0 && pr.statut!=='aucun' ? vaCard(r,pr,mid) : ''}
+    ${r.recettes>0 && pr.statut!=='aucun' ? vaCard(r,pr,mid) : ''}`;
 
+  const secMensuel = `
     ${monthlyNetCard(mid)}
-
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 22px 0;gap:12px;flex-wrap:wrap">
         <div><h2 style="font-size:19px">Fluctuation des revenus</h2>
@@ -1191,9 +1228,17 @@ function renderRevenus(idx){
       </div>
       ${fluctuationChart(mid,m.color,retroLinked)}
       ${monthlyIncomeList(mid)}
-    </div>
+    </div>`;
 
-    <div class="infoNote">⚖️ <b>Estimation</b> — fiscalité belge ${esc(P.annee)} : barème IPP, quotité exemptée + enfants, cotisations sociales, taxe communale ${(r.communalRate*100).toFixed(1)}%, quotient conjugal, majoration/versements anticipés (personnes physiques : abattement 90 %).${S.fiscalYear==='2026'?' <b>Note réforme Arizona :</b> quotité 11 550 € et suppression possible de la majoration VA pour indépendants (bénéfices) restent à confirmer au Moniteur belge.':''} Ne remplace pas ton comptable (PLCI, frais de garde, réductions diverses non inclus).</div>
+  const disc = `<div class="infoNote">⚖️ <b>Estimation</b> — fiscalité belge ${esc(P.annee)} : barème IPP, quotité exemptée + enfants, cotisations sociales, taxe communale ${(r.communalRate*100).toFixed(1)}%, quotient conjugal, majoration/versements anticipés (personnes physiques : abattement 90 %).${S.fiscalYear==='2026'?' <b>Note réforme Arizona :</b> quotité 11 550 € et suppression possible de la majoration VA pour indépendants (bénéfices) restent à confirmer au Moniteur belge.':''} Ne remplace pas ton comptable (PLCI, frais de garde, réductions diverses non inclus).</div>`;
+
+  return `<section class="view grid">
+    ${hero}
+    ${subnav}
+    ${sub==='apercu'?secApercu:''}
+    ${sub==='annuel'?secAnnuel:''}
+    ${sub==='mensuel'?secMensuel:''}
+    ${disc}
   </section>`;
 }
 
@@ -1936,6 +1981,7 @@ function wireView(){
     };
   });
   document.querySelectorAll('[data-addrev]').forEach(b=>b.onclick=()=>openModal('revenu',{memberId:b.dataset.addrev, kind:b.dataset.addrevkind||'salaire'}));
+  document.querySelectorAll('[data-revsub]').forEach(b=>b.onclick=()=>{ REV_SUB=b.dataset.revsub; render(); });
   const ys=document.getElementById('fiscalYearSel'); if(ys) ys.onchange=()=>{ S.fiscalYear=ys.value; save(); render(); };
   document.querySelectorAll('[data-fyear]').forEach(s=>s.onchange=()=>{ S.fiscalYear=s.value; save(); render(); });
   const qc=document.getElementById('qcToggle'); if(qc) qc.onchange=()=>{ S.couple.quotientConjugal=qc.value==='yes'; save(); render(); };
