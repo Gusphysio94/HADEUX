@@ -974,6 +974,9 @@ function childSupp(n,P){
   return t[t.length-1]+(n-(t.length-1))*(P.enfantSuppPlus||0);
 }
 function retroYearTotal(year){ let t=0; const d=S.retro&&S.retro.days||{}; for(const k in d){ if(k.slice(0,4)===String(year)) t+=(+d[k]||0); } return t; }
+// Mois écoulés de l'année (7 en juillet). Année passée = 12 (complète), année future = 12.
+function elapsedMonthsOfYear(year){ const ty=todayISO().slice(0,4), tm=parseInt(todayISO().slice(5,7),10)||12; year=String(year);
+  if(year!==ty) return 12; return Math.max(1, tm); }
 // Total annuel des entrées d'argent loggées (revenus complémentaires) pour un membre, par type
 function entriesYearTotal(mid, kind){ const y=String(S.fiscalYear);
   return sum(S.incomes.filter(i=>i.memberId===mid && (i.date||'').slice(0,4)===y &&
@@ -982,16 +985,21 @@ function computePerson(mid, over){
   const P=activeFiscal();
   const pr=Object.assign({salaireBrut:0,recettes:0,fraisPro:0,statut:'principal',communal:P.communal,enfants:0,va:[0,0,0,0],nouvelIndep:false}, S.profils[mid]||{}, over||{});
   const retroLinked = pr.noRetro ? false : !!(S.retro && S.retro.memberId===mid);
-  // Revenus complémentaires (entrées loggées) ajoutés à la rétro pour le propriétaire
-  const salExtra = retroLinked ? entriesYearTotal(mid,'salaire') : 0;
-  const indExtra = retroLinked ? entriesYearTotal(mid,'indep') : 0;
+  // Projection année pleine : le cumul rétro/entrées (à ce jour) est ramené à 12 mois via les mois écoulés
+  const elapsed = retroLinked ? elapsedMonthsOfYear(S.fiscalYear) : 12;
+  const factor = 12/elapsed;
+  const projected = retroLinked && factor!==1;
+  // Revenus complémentaires (entrées loggées) ajoutés à la rétro pour le propriétaire, projetés sur l'année
+  const salExtra = retroLinked ? entriesYearTotal(mid,'salaire')*factor : 0;
+  const indExtra = retroLinked ? entriesYearTotal(mid,'indep')*factor : 0;
   const salaireBrut = (pr.salaireBrut||0) + salExtra;
   const ssEmp=salaireBrut*P.ssEmploye;
   const salAvantFrais=Math.max(0,salaireBrut-ssEmp);
   const fraisForfait=Math.min(salAvantFrais*P.fraisSalRate, P.fraisSalCap);
   const salImposable=Math.max(0, salAvantFrais-fraisForfait);
-  // Rétrocession : si liée, recettes = rétro de l'année (+ compléments indép), rétro (30%) déductible
-  const retroYear=retroLinked ? retroYearTotal(S.fiscalYear) : 0;
+  // Rétrocession : si liée, recettes = rétro projetée sur l'année (+ compléments indép), rétro (30%) déductible
+  const retroYearRaw=retroLinked ? retroYearTotal(S.fiscalYear) : 0;   // encaissé à ce jour
+  const retroYear=retroYearRaw*factor;                                 // projeté année pleine
   const retroDeduc=retroLinked ? retroYear*(S.retro.rate||0) : 0;
   const recettes=retroLinked ? (retroYear + indExtra) : (pr.recettes||0);
   const fraisTotal=(pr.fraisPro||0)+retroDeduc;
@@ -1029,7 +1037,7 @@ function computePerson(mid, over){
   const preleve=ssEmp+cot.total+impotAvecMaj;
   const net=entrees-ssEmp-fraisTotal-cot.total-impotAvecMaj;
   return {pr,ssEmp,salAvantFrais,fraisForfait,salImposable,beneficeAvantCotis,cot,
-    retroLinked,retroYear,retroDeduc,recettes,fraisTotal,
+    retroLinked,retroYear,retroYearRaw,retroDeduc,recettes,fraisTotal,elapsed,factor,projected,
     indepImposable,baseImposable,qcTransfer,baseTax,ippBrut,quotiteTot,reduction,ippApres,communalRate,communal,
     impotTotal,shareIndep,vaTotal,baseTaxIndep,montantRef,majorationBrute,avantageVA,majoration,
     impotAvecMaj,entrees,preleve,net};
@@ -1038,23 +1046,18 @@ function computePerson(mid, over){
 // Net mensuel estimé à partir des ENTRÉES d'argent réelles (12 mois glissants).
 // On passe le total annuel des entrées dans le moteur fiscal → taux net effectif appliqué à chaque mois.
 function entriesNetEstimate(mid){
-  const pr=S.profils[mid]||{};
   const months=last12Months(); const perMonth={}; months.forEach(m=>perMonth[m]={sal:0,ind:0});
   S.incomes.filter(i=>i.memberId===mid).forEach(i=>{ const mk=monthKey(i.date); if(perMonth[mk]){ if(i.kind==='salaire') perMonth[mk].sal+=i.amount; else perMonth[mk].ind+=i.amount; } });
   const retroOwner = !!(S.retro && S.retro.memberId===mid);
-  if(retroOwner){ months.forEach(m=>{ perMonth[m].ind += retroMonthTotal(m); }); }  // rétro + compléments
+  if(retroOwner){ months.forEach(m=>{ perMonth[m].ind += retroMonthTotal(m); }); }  // rétro + compléments (réel du mois)
   let salY=0, indY=0; months.forEach(m=>{ salY+=perMonth[m].sal; indY+=perMonth[m].ind; });
   const brutY=salY+indY;
   if(brutY<=0) return {empty:true, months, perMonth};
-  // Projection annuelle : moyenne des mois RÉELLEMENT saisis × 12 (les barèmes fiscaux sont annuels)
+  // Taux net effectif = net / brut de l'estimation ANNUELLE (déjà projetée sur les mois écoulés)
+  const r=computePerson(mid);
+  const rate = r.entrees>0 ? r.net/r.entrees : 0;
   const nMonths=months.filter(m=>(perMonth[m].sal+perMonth[m].ind)>0).length || 1;
-  const annBasis=(brutY/nMonths)*12;
-  const salShare=brutY>0?salY/brutY:0;
-  const annSal=annBasis*salShare, annInd=annBasis*(1-salShare);
-  const effFrais=(pr.fraisPro||0) + (retroOwner ? annInd*(S.retro.rate||0) : 0);
-  const r=computePerson(mid,{salaireBrut:annSal, recettes:annInd, noRetro:true, fraisPro:effFrais});
-  const rate=annBasis>0?r.net/annBasis:0;
-  return {empty:false, months, perMonth, brutY, nMonths, annBasis, annNet:r.net, rate};
+  return {empty:false, months, perMonth, brutY, nMonths, annBasis:r.entrees, annNet:r.net, rate, projected:r.projected, elapsed:r.elapsed};
 }
 function monthlyNetCard(mid){
   const pr=S.profils[mid]||{}, ent=entriesNetEstimate(mid);
@@ -1078,7 +1081,7 @@ function monthlyNetCard(mid){
       <div class="main"><div class="l1" style="text-transform:capitalize">${new Date(x.m+'-01T12:00').toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</div>
       <div class="l2">Brut ${EUR0(x.b)}</div></div>
       <div style="text-align:right"><div class="amt pos">${EUR0(x.b*ent.rate)}</div><div style="font-size:11px;color:var(--muted)">net estimé</div></div></div>`).join('')}</div>
-    <div class="infoNote">Basé sur tes <b>${ent.nMonths} mois</b> saisis (moyenne ${EUR0(ent.brutY/ent.nMonths)}/mois → projeté ${EUR0(ent.annBasis)}/an) passés dans le calcul fiscal ${esc(activeFiscal().annee)} : taux net effectif <b>${(ent.rate*100).toFixed(0)}%</b>, appliqué à chaque mois. Plus tu saisis de mois, plus l'estimation s'affine. (Détail annuel exact : « Du brut au net ».)</div>
+    <div class="infoNote">Ton revenu à ce jour ${ent.projected?`est <b>projeté sur l'année</b> (${ent.elapsed} mois écoulés → base ${EUR0(ent.annBasis)}/an)`:`donne une base de ${EUR0(ent.annBasis)}/an`} et passé dans le calcul fiscal ${esc(activeFiscal().annee)} : <b>taux net ${(ent.rate*100).toFixed(0)}%</b>, appliqué au brut réel de chaque mois. (Détail : onglet « Annuel ».)</div>
   </div>`;
 }
 
@@ -1127,8 +1130,8 @@ function renderRevenus(idx){
         <div class="eyebrow">Revenus & fiscalité · ${esc(P.annee)}</div>
         ${yearSel}
       </div>
-      <div class="headline" style="font-size:26px">${esc(m.name)} — net estimé <b>${EUR0(r.net)}</b>/an</div>
-      <div class="sub">soit <b style="color:#F0C863">${EUR0(r.net/12)}/mois</b> en poche, après cotisations sociales et impôts.</div>
+      <div class="headline" style="font-size:26px">${esc(m.name)} — net estimé <b>${EUR0(r.net)}</b>/an${r.projected?' <span style="font-size:14px;opacity:.8">(projeté)</span>':''}</div>
+      <div class="sub">soit <b style="color:#F0C863">${EUR0(r.net/12)}/mois</b> en poche, après cotisations sociales et impôts.${r.projected?` Projection sur l'année à partir des <b>${r.elapsed} mois écoulés</b>.`:''}</div>
       <div class="settle-actions">
         <span class="chip">Brut <b>${EUR0(r.entrees)}</b></span>
         <span class="chip">Taux global <b>${(tauxPrel*100).toFixed(1)}%</b></span>
@@ -1175,7 +1178,7 @@ function renderRevenus(idx){
           <div class="field"><label>🩺 Recettes indépendant (brut)${retroLinked?` <span style="font-weight:400;text-transform:none;color:var(--green)">· auto rétro + compléments</span>`:''}</label>
             <div class="amount-input"><input type="number" step="100" min="0" value="${retroLinked?Math.round(r.recettes):(pr.recettes||'')}" data-prof="recettes" data-mid="${mid}" placeholder="0" ${retroLinked?'disabled style="font-size:22px;padding:12px 40px 12px 14px;opacity:.7"':'style="font-size:22px;padding:12px 40px 12px 14px"'}><span class="cur" style="font-size:19px">€</span></div></div>
         </div>
-        ${retroLinked?`<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green);margin:0"><span class="i">🔗</span><div>Recettes = <b>rétrocession kiné</b> (${EUR0(r.retroYear)}) ${r.recettes>r.retroYear?`+ <b>revenus complémentaires</b> (${EUR0(r.recettes-r.retroYear)}) `:''}récupérées automatiquement pour ${S.fiscalYear}, et la <b>rétrocession (${(S.retro.rate*100).toFixed(0)}%) déduite en frais pro</b>. Ajoute tes compléments dans l'onglet <b>Mensuel</b>.</div></div>`:''}
+        ${retroLinked?`<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green);margin:0"><span class="i">🔗</span><div>Recettes = <b>rétrocession kiné</b> (${EUR0(r.retroYear)}${r.projected?` projeté, dont ${EUR0(r.retroYearRaw)} encaissés sur ${r.elapsed} mois`:''}) ${r.recettes>r.retroYear?`+ <b>compléments</b> (${EUR0(r.recettes-r.retroYear)}) `:''}auto pour ${S.fiscalYear}, et la <b>rétrocession (${(S.retro.rate*100).toFixed(0)}%) déduite en frais pro</b>. Ajoute tes compléments dans l'onglet <b>Mensuel</b>.</div></div>`:''}
         <div class="field two" style="margin:0">
           <div class="field"><label>🧾 ${retroLinked?'Autres frais pro (hors rétro)':'Frais professionnels réels'} / an</label>
             <div class="amount-input"><input type="number" step="100" min="0" value="${pr.fraisPro||''}" data-prof="fraisPro" data-mid="${mid}" placeholder="0" style="font-size:22px;padding:12px 40px 12px 14px"><span class="cur" style="font-size:19px">€</span></div></div>
@@ -1198,7 +1201,7 @@ function renderRevenus(idx){
     <div class="cols">
       <div class="card">
         <h2 class="title">Du brut au net</h2>
-        <p class="sub-t">Décomposition annuelle</p>
+        <p class="sub-t">Décomposition annuelle${r.projected?` (projetée sur ${r.elapsed} mois écoulés)`:''}</p>
         ${waterfall(r,pr)}
       </div>
       <div class="grid" style="gap:16px;align-content:start">
