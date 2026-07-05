@@ -482,7 +482,7 @@ const DEFAULT_STATE = () => ({
   categories:DEFAULT_CATS,
   expenses:[], incomes:[], contributions:[], recurrents:[],
   budgets:{},
-  retro:{ rate:0.30, days:{}, cursorWeek:mondayOf(todayISO()), history:[] },
+  retro:{ rate:0.30, days:{}, cursorWeek:mondayOf(todayISO()), history:[], memberId:'m1' },
   fiscalYear:'2026',
   couple:{quotientConjugal:true},
   profils:{
@@ -516,6 +516,11 @@ function migrate(s){
   if(!s.retro.cursorWeek) s.retro.cursorWeek=mondayOf(todayISO());
   if(!Array.isArray(s.retro.history)) s.retro.history=[];
   delete s.retro.weeks; delete s.retro.cursor;
+  // Propriétaire de la rétrocession (Gus par défaut) — reprend l'ancien retroLink si présent
+  if(!s.retro.memberId){
+    const lk=(s.members||[]).find(m=>s.profils&&s.profils[m.id]&&s.profils[m.id].retroLink);
+    s.retro.memberId = lk ? lk.id : ((s.members&&s.members[0]&&s.members[0].id)||'m1');
+  }
   if(!s.profils) s.profils={};
   (s.members||[]).forEach((m,i)=>{ s.profils[m.id]=Object.assign({salaireBrut:0,recettes:0,fraisPro:0,statut:i===0?'principal':'complementaire',communal:0.07,enfants:0,va:[0,0,0,0],nouvelIndep:false,retroLink:false}, s.profils[m.id]||{}); if(!Array.isArray(s.profils[m.id].va)) s.profils[m.id].va=[0,0,0,0]; });
   return s;
@@ -971,7 +976,7 @@ function computePerson(mid, over){
   const fraisForfait=Math.min(salAvantFrais*P.fraisSalRate, P.fraisSalCap);
   const salImposable=Math.max(0, salAvantFrais-fraisForfait);
   // Rétrocession : si liée, les recettes = total rétro de l'année et la rétro (30%) est une charge déductible
-  const retroLinked=!!pr.retroLink;
+  const retroLinked = pr.noRetro ? false : !!(S.retro && S.retro.memberId===mid);
   const retroYear=retroLinked ? retroYearTotal(S.fiscalYear) : 0;
   const retroDeduc=retroLinked ? retroYear*(S.retro.rate||0) : 0;
   const recettes=retroLinked ? retroYear : (pr.recettes||0);
@@ -1022,7 +1027,8 @@ function entriesNetEstimate(mid){
   const pr=S.profils[mid]||{};
   const months=last12Months(); const perMonth={}; months.forEach(m=>perMonth[m]={sal:0,ind:0});
   S.incomes.filter(i=>i.memberId===mid).forEach(i=>{ const mk=monthKey(i.date); if(perMonth[mk]){ if(i.kind==='salaire') perMonth[mk].sal+=i.amount; else perMonth[mk].ind+=i.amount; } });
-  if(pr.retroLink){ months.forEach(m=>{ perMonth[m].ind=retroMonthTotal(m); }); }
+  const retroOwner = !!(S.retro && S.retro.memberId===mid);
+  if(retroOwner){ months.forEach(m=>{ perMonth[m].ind=retroMonthTotal(m); }); }
   let salY=0, indY=0; months.forEach(m=>{ salY+=perMonth[m].sal; indY+=perMonth[m].ind; });
   const brutY=salY+indY;
   if(brutY<=0) return {empty:true, months, perMonth};
@@ -1031,8 +1037,8 @@ function entriesNetEstimate(mid){
   const annBasis=(brutY/nMonths)*12;
   const salShare=brutY>0?salY/brutY:0;
   const annSal=annBasis*salShare, annInd=annBasis*(1-salShare);
-  const effFrais=(pr.fraisPro||0) + (pr.retroLink ? annInd*(S.retro.rate||0) : 0);
-  const r=computePerson(mid,{salaireBrut:annSal, recettes:annInd, retroLink:false, fraisPro:effFrais});
+  const effFrais=(pr.fraisPro||0) + (retroOwner ? annInd*(S.retro.rate||0) : 0);
+  const r=computePerson(mid,{salaireBrut:annSal, recettes:annInd, noRetro:true, fraisPro:effFrais});
   const rate=annBasis>0?r.net/annBasis:0;
   return {empty:false, months, perMonth, brutY, nMonths, annBasis, annNet:r.net, rate};
 }
@@ -1048,7 +1054,7 @@ function monthlyNetCard(mid){
   const cmLabel=new Date(cm+'-01T12:00').toLocaleDateString('fr-FR',{month:'long'});
   return `<div class="card">
     <h2 class="title">Net estimé par mois</h2>
-    <p class="sub-t">D'après tes entrées réelles${pr.retroLink?' (rétro + salaires)':''} · taux net effectif ${(ent.rate*100).toFixed(0)}%</p>
+    <p class="sub-t">D'après tes entrées réelles${(S.retro&&S.retro.memberId===mid)?' (rétro + salaires)':''} · taux net effectif ${(ent.rate*100).toFixed(0)}%</p>
     <div style="padding:14px 22px 4px"><div class="kpi3">
       <div class="k"><div class="lab">Net estimé · ${esc(cmLabel)}</div><div class="val" style="color:var(--green)">${curBrut>0?EUR0(curBrut*ent.rate):'—'}</div></div>
       <div class="k"><div class="lab">Brut du mois</div><div class="val">${EUR0(curBrut)}</div></div>
@@ -1086,6 +1092,7 @@ function quotientConjugalInfo(){
 function renderRevenus(idx){
   const m=S.members[idx]; if(!m) return renderDash();
   const pr=S.profils[m.id], P=activeFiscal(), mid=m.id;
+  const retroLinked = !!(S.retro && S.retro.memberId===mid);
   const r=computePerson(mid);
   const qcInfo=quotientConjugalInfo();
   const rNoFrais=computePerson(mid,{fraisPro:0});
@@ -1120,15 +1127,12 @@ function renderRevenus(idx){
         <div class="field two" style="margin:0">
           <div class="field"><label>💼 Salaire brut annuel</label>
             <div class="amount-input"><input type="number" step="100" min="0" value="${pr.salaireBrut||''}" data-prof="salaireBrut" data-mid="${mid}" placeholder="0" style="font-size:22px;padding:12px 40px 12px 14px"><span class="cur" style="font-size:19px">€</span></div></div>
-          <div class="field"><label>🩺 Recettes indépendant (brut)${pr.retroLink?` <span style="font-weight:400;text-transform:none;color:var(--green)">· auto rétro</span>`:''}</label>
-            <div class="amount-input"><input type="number" step="100" min="0" value="${pr.retroLink?Math.round(r.retroYear):(pr.recettes||'')}" data-prof="recettes" data-mid="${mid}" placeholder="0" ${pr.retroLink?'disabled style="font-size:22px;padding:12px 40px 12px 14px;opacity:.7"':'style="font-size:22px;padding:12px 40px 12px 14px"'}><span class="cur" style="font-size:19px">€</span></div></div>
+          <div class="field"><label>🩺 Recettes indépendant (brut)${retroLinked?` <span style="font-weight:400;text-transform:none;color:var(--green)">· auto rétro</span>`:''}</label>
+            <div class="amount-input"><input type="number" step="100" min="0" value="${retroLinked?Math.round(r.retroYear):(pr.recettes||'')}" data-prof="recettes" data-mid="${mid}" placeholder="0" ${retroLinked?'disabled style="font-size:22px;padding:12px 40px 12px 14px;opacity:.7"':'style="font-size:22px;padding:12px 40px 12px 14px"'}><span class="cur" style="font-size:19px">€</span></div></div>
         </div>
-        <div class="field" style="margin:0">
-          <label>🔗 Recettes issues de la rétrocession</label>
-          <select data-prof="retroLink" data-mid="${mid}"><option value="no" ${!pr.retroLink?'selected':''}>Non — je saisis mes recettes à la main</option><option value="yes" ${pr.retroLink?'selected':''}>Oui — utiliser mes saisies de l'onglet Rétrocession (${S.fiscalYear})</option></select>
-        </div>
+        ${retroLinked?`<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green);margin:0"><span class="i">🔗</span><div>Recettes kiné <b>récupérées automatiquement</b> de l'onglet Rétrocession (${EUR0(r.retroYear)} en ${S.fiscalYear}), et la <b>rétrocession (${(S.retro.rate*100).toFixed(0)}%) est déduite en frais pro</b>. Le propriétaire de la rétro se règle dans l'onglet Rétrocession.</div></div>`:''}
         <div class="field two" style="margin:0">
-          <div class="field"><label>🧾 ${pr.retroLink?'Autres frais pro (hors rétro)':'Frais professionnels réels'} / an</label>
+          <div class="field"><label>🧾 ${retroLinked?'Autres frais pro (hors rétro)':'Frais professionnels réels'} / an</label>
             <div class="amount-input"><input type="number" step="100" min="0" value="${pr.fraisPro||''}" data-prof="fraisPro" data-mid="${mid}" placeholder="0" style="font-size:22px;padding:12px 40px 12px 14px"><span class="cur" style="font-size:19px">€</span></div></div>
           <div class="field two" style="margin:0">
             <div class="field"><label>Statut indépendant</label>
@@ -1174,11 +1178,11 @@ function renderRevenus(idx){
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 22px 0;gap:12px;flex-wrap:wrap">
         <div><h2 style="font-size:19px">Fluctuation des revenus</h2>
-        <p class="sub-t" style="padding:2px 0 0">${pr.retroLink?'Revenus kiné mensuels issus de la rétrocession':'Entrées mensuelles enregistrées'} pour ${esc(m.name)} (12 mois)</p></div>
-        ${pr.retroLink?'':`<button class="btn primary sm" data-addrev="${mid}"><span class="plus">+</span> Entrée du mois</button>`}
+        <p class="sub-t" style="padding:2px 0 0">${retroLinked?'Revenus kiné mensuels issus de la rétrocession':'Entrées mensuelles enregistrées'} pour ${esc(m.name)} (12 mois)</p></div>
+        ${retroLinked?'':`<button class="btn primary sm" data-addrev="${mid}"><span class="plus">+</span> Entrée du mois</button>`}
       </div>
-      ${fluctuationChart(mid,m.color,pr.retroLink)}
-      ${pr.retroLink?'':monthlyIncomeList(mid)}
+      ${fluctuationChart(mid,m.color,retroLinked)}
+      ${retroLinked?'':monthlyIncomeList(mid)}
     </div>
 
     <div class="infoNote">⚖️ <b>Estimation</b> — fiscalité belge ${esc(P.annee)} : barème IPP, quotité exemptée + enfants, cotisations sociales, taxe communale ${(r.communalRate*100).toFixed(1)}%, quotient conjugal, majoration/versements anticipés (personnes physiques : abattement 90 %).${S.fiscalYear==='2026'?' <b>Note réforme Arizona :</b> quotité 11 550 € et suppression possible de la majoration VA pour indépendants (bénéfices) restent à confirmer au Moniteur belge.':''} Ne remplace pas ton comptable (PLCI, frais de garde, réductions diverses non inclus).</div>
@@ -1336,7 +1340,10 @@ function renderRetro(){
     <div class="card hero">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
         <div class="eyebrow">Rétrocession cabinet · ${esc(mName)}</div>
-        <span class="chip">Taux&nbsp;<input type="number" step="1" min="0" max="100" value="${+(R.rate*100).toFixed(2)}" data-retrorate style="width:52px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:3px 6px;font-weight:700;text-align:right">&nbsp;%</span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <span class="chip">Rétro de&nbsp;<select data-retroowner style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:3px 6px;font-weight:700">${S.members.map(mm=>`<option value="${mm.id}" ${S.retro.memberId===mm.id?'selected':''} style="color:#000">${esc(mm.name)}</option>`).join('')}</select></span>
+          <span class="chip">Taux&nbsp;<input type="number" step="1" min="0" max="100" value="${+(R.rate*100).toFixed(2)}" data-retrorate style="width:52px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:3px 6px;font-weight:700;text-align:right">&nbsp;%</span>
+        </div>
       </div>
       <div class="headline">Rétro de ${esc(mName)} : <b>${EUR0(retro)}</b></div>
       <div class="sub">sur <b style="color:#F0C863">${EUR0(monthTot)}</b> de revenus kiné · ${(R.rate*100).toFixed(0)}% reversés au cabinet.${validated?` <span style="opacity:.8">✓ validé le ${fmtDay(validated.validatedAt)}</span>`:''}</div>
@@ -1905,7 +1912,6 @@ function wireView(){
       const mid=inp.dataset.mid, f=inp.dataset.prof; const p=S.profils[mid]; if(!p) return;
       if(f==='statut'){ p.statut=inp.value; }
       else if(f==='nouvelIndep'){ p.nouvelIndep=inp.value==='yes'; }
-      else if(f==='retroLink'){ p.retroLink=inp.value==='yes'; }
       else if(f==='communal'){ p.communal=Math.max(0,(parseFloat(inp.value)||0)/100); }
       else if(f==='enfants'){ p.enfants=Math.max(0,Math.round(parseFloat(inp.value)||0)); }
       else { p[f]=Math.max(0, parseFloat(inp.value)||0); }
@@ -1937,6 +1943,7 @@ function wireView(){
     save(); render();
   });
   const rr=document.querySelector('[data-retrorate]'); if(rr) rr.onchange=()=>{ S.retro.rate=Math.max(0,(parseFloat(rr.value)||0)/100); save(); render(); };
+  const ro=document.querySelector('[data-retroowner]'); if(ro) ro.onchange=()=>{ S.retro.memberId=ro.value; save(); render(); };
   document.querySelectorAll('[data-retro]').forEach(b=>b.onclick=()=>{
     const R=S.retro, act=b.dataset.retro;
     if(act==='prev'){ const w=addDays(R.cursorWeek,-7); if(retroWeekMonth(w)>=RETRO_MIN_MONTH){ R.cursorWeek=w; save(); render(); } }
@@ -2049,7 +2056,7 @@ function buildReportGlobal(){
   </div>`;
 }
 
-function retroOwnerName(){ const m=S.members.find(x=>S.profils[x.id]&&S.profils[x.id].retroLink); return (m||S.members[0]).name; }
+function retroOwnerName(){ return (member(S.retro&&S.retro.memberId)||S.members[0]).name; }
 function buildReportRetro(year){
   const R=S.retro; year=String(year||todayISO().slice(0,4));
   const byMonth={}; for(const d in R.days){ if(d.slice(0,4)===year){ const mk=monthKey(d); byMonth[mk]=(byMonth[mk]||0)+R.days[d]; } }
