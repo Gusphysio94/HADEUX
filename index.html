@@ -968,18 +968,26 @@ function childSupp(n,P){
   return t[t.length-1]+(n-(t.length-1))*(P.enfantSuppPlus||0);
 }
 function retroYearTotal(year){ let t=0; const d=S.retro&&S.retro.days||{}; for(const k in d){ if(k.slice(0,4)===String(year)) t+=(+d[k]||0); } return t; }
+// Total annuel des entrées d'argent loggées (revenus complémentaires) pour un membre, par type
+function entriesYearTotal(mid, kind){ const y=String(S.fiscalYear);
+  return sum(S.incomes.filter(i=>i.memberId===mid && (i.date||'').slice(0,4)===y &&
+    (kind==='salaire' ? i.kind==='salaire' : (i.kind==='indep'||!i.kind))).map(i=>i.amount)); }
 function computePerson(mid, over){
   const P=activeFiscal();
-  const pr=Object.assign({salaireBrut:0,recettes:0,fraisPro:0,statut:'principal',communal:P.communal,enfants:0,va:[0,0,0,0],nouvelIndep:false,retroLink:false}, S.profils[mid]||{}, over||{});
-  const ssEmp=(pr.salaireBrut||0)*P.ssEmploye;
-  const salAvantFrais=Math.max(0,(pr.salaireBrut||0)-ssEmp);
+  const pr=Object.assign({salaireBrut:0,recettes:0,fraisPro:0,statut:'principal',communal:P.communal,enfants:0,va:[0,0,0,0],nouvelIndep:false}, S.profils[mid]||{}, over||{});
+  const retroLinked = pr.noRetro ? false : !!(S.retro && S.retro.memberId===mid);
+  // Revenus complémentaires (entrées loggées) ajoutés à la rétro pour le propriétaire
+  const salExtra = retroLinked ? entriesYearTotal(mid,'salaire') : 0;
+  const indExtra = retroLinked ? entriesYearTotal(mid,'indep') : 0;
+  const salaireBrut = (pr.salaireBrut||0) + salExtra;
+  const ssEmp=salaireBrut*P.ssEmploye;
+  const salAvantFrais=Math.max(0,salaireBrut-ssEmp);
   const fraisForfait=Math.min(salAvantFrais*P.fraisSalRate, P.fraisSalCap);
   const salImposable=Math.max(0, salAvantFrais-fraisForfait);
-  // Rétrocession : si liée, les recettes = total rétro de l'année et la rétro (30%) est une charge déductible
-  const retroLinked = pr.noRetro ? false : !!(S.retro && S.retro.memberId===mid);
+  // Rétrocession : si liée, recettes = rétro de l'année (+ compléments indép), rétro (30%) déductible
   const retroYear=retroLinked ? retroYearTotal(S.fiscalYear) : 0;
   const retroDeduc=retroLinked ? retroYear*(S.retro.rate||0) : 0;
-  const recettes=retroLinked ? retroYear : (pr.recettes||0);
+  const recettes=retroLinked ? (retroYear + indExtra) : (pr.recettes||0);
   const fraisTotal=(pr.fraisPro||0)+retroDeduc;
   const beneficeAvantCotis=Math.max(0, recettes-fraisTotal);
   const cot=cotisationsIndep(beneficeAvantCotis, pr.statut, P);
@@ -1010,7 +1018,7 @@ function computePerson(mid, over){
   const seuilMaj=Math.max(100, 0.005*baseTaxIndep);
   if(majoration<seuilMaj) majoration=0;
   const majorationBrute=majBase*(P.majorationPP||1);
-  const entrees=(pr.salaireBrut||0)+recettes;
+  const entrees=salaireBrut+recettes;
   const impotAvecMaj=impotTotal+majoration;
   const preleve=ssEmp+cot.total+impotAvecMaj;
   const net=entrees-ssEmp-fraisTotal-cot.total-impotAvecMaj;
@@ -1028,7 +1036,7 @@ function entriesNetEstimate(mid){
   const months=last12Months(); const perMonth={}; months.forEach(m=>perMonth[m]={sal:0,ind:0});
   S.incomes.filter(i=>i.memberId===mid).forEach(i=>{ const mk=monthKey(i.date); if(perMonth[mk]){ if(i.kind==='salaire') perMonth[mk].sal+=i.amount; else perMonth[mk].ind+=i.amount; } });
   const retroOwner = !!(S.retro && S.retro.memberId===mid);
-  if(retroOwner){ months.forEach(m=>{ perMonth[m].ind=retroMonthTotal(m); }); }
+  if(retroOwner){ months.forEach(m=>{ perMonth[m].ind += retroMonthTotal(m); }); }  // rétro + compléments
   let salY=0, indY=0; months.forEach(m=>{ salY+=perMonth[m].sal; indY+=perMonth[m].ind; });
   const brutY=salY+indY;
   if(brutY<=0) return {empty:true, months, perMonth};
@@ -1127,10 +1135,10 @@ function renderRevenus(idx){
         <div class="field two" style="margin:0">
           <div class="field"><label>💼 Salaire brut annuel</label>
             <div class="amount-input"><input type="number" step="100" min="0" value="${pr.salaireBrut||''}" data-prof="salaireBrut" data-mid="${mid}" placeholder="0" style="font-size:22px;padding:12px 40px 12px 14px"><span class="cur" style="font-size:19px">€</span></div></div>
-          <div class="field"><label>🩺 Recettes indépendant (brut)${retroLinked?` <span style="font-weight:400;text-transform:none;color:var(--green)">· auto rétro</span>`:''}</label>
-            <div class="amount-input"><input type="number" step="100" min="0" value="${retroLinked?Math.round(r.retroYear):(pr.recettes||'')}" data-prof="recettes" data-mid="${mid}" placeholder="0" ${retroLinked?'disabled style="font-size:22px;padding:12px 40px 12px 14px;opacity:.7"':'style="font-size:22px;padding:12px 40px 12px 14px"'}><span class="cur" style="font-size:19px">€</span></div></div>
+          <div class="field"><label>🩺 Recettes indépendant (brut)${retroLinked?` <span style="font-weight:400;text-transform:none;color:var(--green)">· auto rétro + compléments</span>`:''}</label>
+            <div class="amount-input"><input type="number" step="100" min="0" value="${retroLinked?Math.round(r.recettes):(pr.recettes||'')}" data-prof="recettes" data-mid="${mid}" placeholder="0" ${retroLinked?'disabled style="font-size:22px;padding:12px 40px 12px 14px;opacity:.7"':'style="font-size:22px;padding:12px 40px 12px 14px"'}><span class="cur" style="font-size:19px">€</span></div></div>
         </div>
-        ${retroLinked?`<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green);margin:0"><span class="i">🔗</span><div>Recettes kiné <b>récupérées automatiquement</b> de l'onglet Rétrocession (${EUR0(r.retroYear)} en ${S.fiscalYear}), et la <b>rétrocession (${(S.retro.rate*100).toFixed(0)}%) est déduite en frais pro</b>. Le propriétaire de la rétro se règle dans l'onglet Rétrocession.</div></div>`:''}
+        ${retroLinked?`<div class="banner" style="background:var(--green-soft);border-color:#cfe0d5;color:var(--green);margin:0"><span class="i">🔗</span><div>Recettes = <b>rétrocession kiné</b> (${EUR0(r.retroYear)}) ${r.recettes>r.retroYear?`+ <b>revenus complémentaires</b> (${EUR0(r.recettes-r.retroYear)}) `:''}récupérées automatiquement pour ${S.fiscalYear}, et la <b>rétrocession (${(S.retro.rate*100).toFixed(0)}%) déduite en frais pro</b>. Ajoute tes compléments plus bas (« + Revenu complémentaire »).</div></div>`:''}
         <div class="field two" style="margin:0">
           <div class="field"><label>🧾 ${retroLinked?'Autres frais pro (hors rétro)':'Frais professionnels réels'} / an</label>
             <div class="amount-input"><input type="number" step="100" min="0" value="${pr.fraisPro||''}" data-prof="fraisPro" data-mid="${mid}" placeholder="0" style="font-size:22px;padding:12px 40px 12px 14px"><span class="cur" style="font-size:19px">€</span></div></div>
@@ -1178,11 +1186,11 @@ function renderRevenus(idx){
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 22px 0;gap:12px;flex-wrap:wrap">
         <div><h2 style="font-size:19px">Fluctuation des revenus</h2>
-        <p class="sub-t" style="padding:2px 0 0">${retroLinked?'Revenus kiné mensuels issus de la rétrocession':'Entrées mensuelles enregistrées'} pour ${esc(m.name)} (12 mois)</p></div>
-        ${retroLinked?'':`<button class="btn primary sm" data-addrev="${mid}"><span class="plus">+</span> Entrée du mois</button>`}
+        <p class="sub-t" style="padding:2px 0 0">${retroLinked?'Rétrocession kiné + revenus complémentaires':'Entrées mensuelles enregistrées'} pour ${esc(m.name)} (12 mois)</p></div>
+        <button class="btn primary sm" data-addrev="${mid}" data-addrevkind="${retroLinked?'indep':'salaire'}"><span class="plus">+</span> ${retroLinked?'Revenu complémentaire':'Entrée du mois'}</button>
       </div>
       ${fluctuationChart(mid,m.color,retroLinked)}
-      ${retroLinked?'':monthlyIncomeList(mid)}
+      ${monthlyIncomeList(mid)}
     </div>
 
     <div class="infoNote">⚖️ <b>Estimation</b> — fiscalité belge ${esc(P.annee)} : barème IPP, quotité exemptée + enfants, cotisations sociales, taxe communale ${(r.communalRate*100).toFixed(1)}%, quotient conjugal, majoration/versements anticipés (personnes physiques : abattement 90 %).${S.fiscalYear==='2026'?' <b>Note réforme Arizona :</b> quotité 11 550 € et suppression possible de la majoration VA pour indépendants (bénéfices) restent à confirmer au Moniteur belge.':''} Ne remplace pas ton comptable (PLCI, frais de garde, réductions diverses non inclus).</div>
@@ -1278,9 +1286,9 @@ function last12Months(){
 function fluctuationChart(mid,color,fromRetro){
   const months=last12Months(); const byM={};
   if(fromRetro){ const d=S.retro&&S.retro.days||{}; for(const k in d){ const mk=monthKey(k); byM[mk]=(byM[mk]||0)+(+d[k]||0); } }
-  else { S.incomes.filter(i=>i.memberId===mid).forEach(i=>{const k=monthKey(i.date); byM[k]=(byM[k]||0)+i.amount;}); }
+  S.incomes.filter(i=>i.memberId===mid).forEach(i=>{const k=monthKey(i.date); byM[k]=(byM[k]||0)+i.amount;}); // compléments (et entrées si non-propriétaire)
   const vals=months.map(k=>byM[k]||0); const max=Math.max(1,...vals);
-  if(vals.every(v=>v===0)) return `<div class="empty" style="padding:34px"><p>${fromRetro?'Aucune saisie de rétrocession sur ces 12 mois.':'Aucune entrée enregistrée. Ajoute les revenus mensuels pour voir la courbe.'}</p></div>`;
+  if(vals.every(v=>v===0)) return `<div class="empty" style="padding:34px"><p>${fromRetro?'Aucune saisie de rétrocession ni de complément sur ces 12 mois.':'Aucune entrée enregistrée. Ajoute les revenus mensuels pour voir la courbe.'}</p></div>`;
   return `<div class="chartbox"><div class="barchart">${months.map((k,i)=>{
     const v=vals[i]; const h=v/max*120;
     const lab=new Date(k+'-01T12:00').toLocaleDateString('fr-FR',{month:'narrow'});
@@ -1927,7 +1935,7 @@ function wireView(){
       save(); render();
     };
   });
-  document.querySelectorAll('[data-addrev]').forEach(b=>b.onclick=()=>openModal('revenu',{memberId:b.dataset.addrev}));
+  document.querySelectorAll('[data-addrev]').forEach(b=>b.onclick=()=>openModal('revenu',{memberId:b.dataset.addrev, kind:b.dataset.addrevkind||'salaire'}));
   const ys=document.getElementById('fiscalYearSel'); if(ys) ys.onchange=()=>{ S.fiscalYear=ys.value; save(); render(); };
   document.querySelectorAll('[data-fyear]').forEach(s=>s.onchange=()=>{ S.fiscalYear=s.value; save(); render(); });
   const qc=document.getElementById('qcToggle'); if(qc) qc.onchange=()=>{ S.couple.quotientConjugal=qc.value==='yes'; save(); render(); };
