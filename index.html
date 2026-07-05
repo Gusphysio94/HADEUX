@@ -1016,6 +1016,52 @@ function computePerson(mid, over){
     impotAvecMaj,entrees,preleve,net};
 }
 
+// Net mensuel estimé à partir des ENTRÉES d'argent réelles (12 mois glissants).
+// On passe le total annuel des entrées dans le moteur fiscal → taux net effectif appliqué à chaque mois.
+function entriesNetEstimate(mid){
+  const pr=S.profils[mid]||{};
+  const months=last12Months(); const perMonth={}; months.forEach(m=>perMonth[m]={sal:0,ind:0});
+  S.incomes.filter(i=>i.memberId===mid).forEach(i=>{ const mk=monthKey(i.date); if(perMonth[mk]){ if(i.kind==='salaire') perMonth[mk].sal+=i.amount; else perMonth[mk].ind+=i.amount; } });
+  if(pr.retroLink){ months.forEach(m=>{ perMonth[m].ind=retroMonthTotal(m); }); }
+  let salY=0, indY=0; months.forEach(m=>{ salY+=perMonth[m].sal; indY+=perMonth[m].ind; });
+  const brutY=salY+indY;
+  if(brutY<=0) return {empty:true, months, perMonth};
+  // Projection annuelle : moyenne des mois RÉELLEMENT saisis × 12 (les barèmes fiscaux sont annuels)
+  const nMonths=months.filter(m=>(perMonth[m].sal+perMonth[m].ind)>0).length || 1;
+  const annBasis=(brutY/nMonths)*12;
+  const salShare=brutY>0?salY/brutY:0;
+  const annSal=annBasis*salShare, annInd=annBasis*(1-salShare);
+  const effFrais=(pr.fraisPro||0) + (pr.retroLink ? annInd*(S.retro.rate||0) : 0);
+  const r=computePerson(mid,{salaireBrut:annSal, recettes:annInd, retroLink:false, fraisPro:effFrais});
+  const rate=annBasis>0?r.net/annBasis:0;
+  return {empty:false, months, perMonth, brutY, nMonths, annBasis, annNet:r.net, rate};
+}
+function monthlyNetCard(mid){
+  const pr=S.profils[mid]||{}, ent=entriesNetEstimate(mid);
+  if(ent.empty) return `<div class="card">
+    <h2 class="title">Net estimé par mois</h2>
+    <p class="sub-t">D'après tes entrées d'argent réelles</p>
+    <div class="empty" style="padding:30px 20px"><p>Ajoute tes entrées mensuelles (bouton <b>« + Entrée du mois »</b> ci-dessous) : l'app estimera ton <b>net conservé</b> pour chaque mois.</p></div>
+  </div>`;
+  const cm=curMonth(); const cb=ent.perMonth[cm]||{sal:0,ind:0}; const curBrut=cb.sal+cb.ind;
+  const rows=ent.months.slice().reverse().map(m=>{const pm=ent.perMonth[m]; return {m,b:pm.sal+pm.ind};}).filter(x=>x.b>0);
+  const cmLabel=new Date(cm+'-01T12:00').toLocaleDateString('fr-FR',{month:'long'});
+  return `<div class="card">
+    <h2 class="title">Net estimé par mois</h2>
+    <p class="sub-t">D'après tes entrées réelles${pr.retroLink?' (rétro + salaires)':''} · taux net effectif ${(ent.rate*100).toFixed(0)}%</p>
+    <div style="padding:14px 22px 4px"><div class="kpi3">
+      <div class="k"><div class="lab">Net estimé · ${esc(cmLabel)}</div><div class="val" style="color:var(--green)">${curBrut>0?EUR0(curBrut*ent.rate):'—'}</div></div>
+      <div class="k"><div class="lab">Brut du mois</div><div class="val">${EUR0(curBrut)}</div></div>
+      <div class="k"><div class="lab">Tu conserves</div><div class="val">${(ent.rate*100).toFixed(0)}%</div></div>
+    </div></div>
+    <div class="list">${rows.map(x=>`<div class="row"><div class="em">📅</div>
+      <div class="main"><div class="l1" style="text-transform:capitalize">${new Date(x.m+'-01T12:00').toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</div>
+      <div class="l2">Brut ${EUR0(x.b)}</div></div>
+      <div style="text-align:right"><div class="amt pos">${EUR0(x.b*ent.rate)}</div><div style="font-size:11px;color:var(--muted)">net estimé</div></div></div>`).join('')}</div>
+    <div class="infoNote">Basé sur tes <b>${ent.nMonths} mois</b> saisis (moyenne ${EUR0(ent.brutY/ent.nMonths)}/mois → projeté ${EUR0(ent.annBasis)}/an) passés dans le calcul fiscal ${esc(activeFiscal().annee)} : taux net effectif <b>${(ent.rate*100).toFixed(0)}%</b>, appliqué à chaque mois. Plus tu saisis de mois, plus l'estimation s'affine. (Détail annuel exact : « Du brut au net ».)</div>
+  </div>`;
+}
+
 // Quotient conjugal — présenté comme une économie d'impôt au niveau du COUPLE
 // (le QC répartit l'impôt entre conjoints ; on ne distord pas le net individuel).
 function quotientConjugalInfo(){
@@ -1122,6 +1168,8 @@ function renderRevenus(idx){
     </div>
 
     ${r.recettes>0 && pr.statut!=='aucun' ? vaCard(r,pr,mid) : ''}
+
+    ${monthlyNetCard(mid)}
 
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 22px 0;gap:12px;flex-wrap:wrap">
