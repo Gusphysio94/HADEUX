@@ -2,8 +2,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>HADEUX — Budget du foyer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><path d='M50 32 C48 24 40 20 32 22 C20 26 16 42 24 54 C30 64 42 72 50 80 Z' fill='%23F08C8C'/><path d='M50 32 C52 24 60 20 68 22 C80 26 84 42 76 54 C70 64 58 72 50 80 Z' fill='%23A491E2'/><path d='M40 42 C40 33 44 28 50 28 C56 28 60 33 60 42 L60 55 C60 61 56 65 50 71 C44 65 40 61 40 55 Z' fill='%2347406A'/><circle cx='45' cy='38' r='2' fill='%23fff'/><circle cx='45' cy='44' r='2' fill='%23fff'/><circle cx='45' cy='50' r='2' fill='%23fff'/><path d='M41 56 L59 56 L50 71 Z' fill='%23F1ECF8'/></svg>">
-<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23FFFDF8'/><path d='M50 32 C48 24 40 20 32 22 C20 26 16 42 24 54 C30 64 42 72 50 80 Z' fill='%23F08C8C'/><path d='M50 32 C52 24 60 20 68 22 C80 26 84 42 76 54 C70 64 58 72 50 80 Z' fill='%23A491E2'/><path d='M40 42 C40 33 44 28 50 28 C56 28 60 33 60 42 L60 55 C60 61 56 65 50 71 C44 65 40 61 40 55 Z' fill='%2347406A'/><path d='M41 56 L59 56 L50 71 Z' fill='%23F1ECF8'/></svg>">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#F4EEE2">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="HADEUX">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2242,6 +2247,16 @@ function renderReglages(){
       : `<div class="banner"><span class="i">☁️</span><div><b>Mode local.</b> L'app fonctionne sur cet appareil uniquement. Pour l'accès à deux synchronisé (Supabase), renseigne <code>CLOUD.url</code> et <code>CLOUD.anonKey</code> en haut du fichier, puis déploie. Pense à <b>exporter</b> tes données avant.</div></div>`}
 
     <div class="card">
+      <h2 class="title" style="padding-bottom:6px">📱 Installer l'application</h2>
+      <div style="padding:6px 22px 20px;font-size:13.5px;color:var(--muted);line-height:1.75">
+        <p>HADEUX s'installe comme une vraie app, sans passer par un store :</p>
+        <p>• <b>iPhone (Safari)</b> : bouton <b>Partager</b> <span style="font-family:system-ui">⬆️</span> → <b>« Sur l'écran d'accueil »</b>.</p>
+        <p>• <b>Android (Chrome)</b> : menu <b>⋮</b> → <b>« Installer l'application »</b> (ou la bannière proposée).</p>
+        <p>Elle s'ouvre alors en plein écran, avec son icône, et fonctionne même hors-ligne.</p>
+      </div>
+    </div>
+
+    <div class="card">
       <h2 class="title" style="padding-bottom:6px">Les personnes du foyer</h2>
       ${S.members.map(m=>`<div class="setrow">
         <div><div class="st">Personne</div><div class="sd">Nom affiché dans l'app</div></div>
@@ -3000,4 +3015,9 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 
 render();
 initCloud();
+
+/* PWA : installe le service worker (app installable + hors-ligne). HTTPS ou localhost requis. */
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{ navigator.serviceWorker.register('/sw.js').catch(()=>{}); });
+}
 </script>
