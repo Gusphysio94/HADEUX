@@ -385,6 +385,11 @@
     display:grid;place-items:center;transition:.12s}
   .iconbtn:hover{background:var(--surface2);color:var(--ink)}
   .iconbtn.danger:hover{background:var(--terra-soft);color:var(--terra)}
+  .iconbtn.pinned{color:var(--terra)}
+  .mealdetail{padding:0 16px 12px 64px;font-size:13px;color:var(--muted);line-height:1.6}
+  @media(max-width:640px){.mealdetail{padding-left:16px}}
+  .daybadge{font-size:10.5px;font-weight:700;color:var(--green);background:var(--green-soft);
+    border:1px solid #cfe0d5;border-radius:8px;padding:4px 7px;white-space:nowrap;flex:none;min-width:58px;text-align:center}
   .rayon-head{display:flex;align-items:center;gap:9px;padding:15px 14px 6px;font-weight:700;font-size:12px;
     color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
   .rayon-head .re{font-size:16px}
@@ -715,7 +720,8 @@ const DEFAULT_STATE = () => ({
     m1:{salaireBrut:0, recettes:0, fraisPro:0, statut:'principal', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false},
     m2:{salaireBrut:0, recettes:0, fraisPro:0, statut:'complementaire', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false}
   },
-  meals:{recipes:DEFAULT_RECIPES(), menus:{soir:[],midi:[]}, targets:{soir:7,midi:5}, checked:{}},
+  meals:{recipes:DEFAULT_RECIPES(), menus:{soir:[],midi:[]}, targets:{soir:7,midi:5}, checked:{},
+    pinned:[], extras:[], pantry:[], recent:[], filters:{maxTime:0,veggieOnly:false,exclude:''}, startDay:1},
   ui:{month:monthKey(todayISO())}, version:3
 });
 
@@ -726,6 +732,10 @@ let REV_SUB = 'apercu';   // sous-onglet actif des Revenus : apercu | annuel | m
 let MEAL_SUB = 'menu';    // sous-onglet actif des Repas : menu | recettes
 let MEAL_SLOT = 'soir';   // créneau planifié dans « Ma semaine » : soir | midi
 let MEAL_LIB = 'all';     // filtre de la bibliothèque de recettes : all | soir | midi
+let MEAL_OPEN = {};       // recetteId -> déplié (ingrédients/préparation) — session
+let MEAL_SHOW_PANTRY = false; // afficher le garde-manger — session
+let MEAL_DAYVIEW = false;  // vue par jour dans « Ma semaine » — session
+let MEAL_SHOW_FILTERS = false; // afficher les filtres de génération — session
 
 // Normalise/complète un état (utilisé au chargement local ET pour les données reçues du cloud)
 function migrate(s){
@@ -767,6 +777,15 @@ function migrate(s){
   if(typeof s.meals.targets.midi!=='number') s.meals.targets.midi=5;
   delete s.meals.menu; delete s.meals.targetEvenings;
   if(!s.meals.checked||typeof s.meals.checked!=='object') s.meals.checked={};
+  if(!Array.isArray(s.meals.pinned)) s.meals.pinned=[];
+  if(!Array.isArray(s.meals.extras)) s.meals.extras=[];
+  if(!Array.isArray(s.meals.pantry)) s.meals.pantry=[];
+  if(!Array.isArray(s.meals.recent)) s.meals.recent=[];
+  if(!s.meals.filters||typeof s.meals.filters!=='object') s.meals.filters={maxTime:0,veggieOnly:false,exclude:''};
+  if(typeof s.meals.filters.maxTime!=='number') s.meals.filters.maxTime=0;
+  if(typeof s.meals.filters.veggieOnly!=='boolean') s.meals.filters.veggieOnly=false;
+  if(typeof s.meals.filters.exclude!=='string') s.meals.filters.exclude='';
+  if(typeof s.meals.startDay!=='number') s.meals.startDay=1;
   return s;
 }
 function load(){
@@ -1905,15 +1924,31 @@ function renderCommun(){
 ============================================================ */
 function recipeById(id){ return (S.meals.recipes||[]).find(r=>r.id===id); }
 
+// Filtres de génération (temps max, végé only, ingrédients exclus)
+function recipePassesFilters(r){
+  const f=S.meals.filters||{};
+  if(f.veggieOnly && !r.veggie) return false;
+  if(f.maxTime>0 && (r.time||0)>f.maxTime) return false;
+  const ex=(f.exclude||'').toLowerCase().split(/[,;]+/).map(s=>s.trim()).filter(Boolean);
+  if(ex.length){ const hay=((r.name||'')+' '+(r.ingredients||[]).join(' ')).toLowerCase(); if(ex.some(t=>hay.includes(t))) return false; }
+  return true;
+}
 // Génère un menu équilibré pour un créneau (soir|midi) couvrant ~`target` repas :
-// - pas de répétition de la même protéine (bœuf/poulet/porc/poisson) dans la semaine,
-// - alternance végé / non-végé,
-// - un plat « ×2 jours » compte pour 2 repas.
+// - conserve les plats ÉPINGLÉS déjà présents,
+// - défavorise les plats des semaines RÉCENTES,
+// - respecte les FILTRES actifs,
+// - variété des protéines, alternance végé/non-végé, « ×2 jours » = 2 repas.
 function generateMenu(slot, target){
-  const pool=(S.meals.recipes||[]).filter(r=>(r.meal||'soir')===slot);
-  if(!pool.length) return [];
-  const chosen=[]; let evenings=0;
-  const protCount={}; let lastProt=null, lastVeg=null; let vegC=0, nonVegC=0;
+  const inSlot=r=>(r.meal||'soir')===slot;
+  const pinned=S.meals.pinned||[];
+  const recent=S.meals.recent||[];
+  // Plats épinglés déjà dans ce créneau : on les garde tels quels
+  const chosen=[...new Set((S.meals.menus[slot]||[]).filter(id=>pinned.includes(id) && recipeById(id) && inSlot(recipeById(id))))];
+  const usedIds=new Set(chosen);
+  const protCount={}; let lastProt=null, lastVeg=null; let vegC=0, nonVegC=0, evenings=0;
+  chosen.forEach(id=>{ const r=recipeById(id); if(!r) return; const p=detectProtein(r.ingredients||[]);
+    protCount[p]=(protCount[p]||0)+1; lastProt=p; lastVeg=r.veggie; if(r.veggie)vegC++; else nonVegC++; evenings+=r.twoDays?2:1; });
+  let pool=(S.meals.recipes||[]).filter(r=>inSlot(r)&&!usedIds.has(r.id)&&recipePassesFilters(r));
   while(evenings<target && pool.length){
     let best=null, bestScore=-1e9, bestIdx=-1;
     pool.forEach((r,idx)=>{
@@ -1924,6 +1959,7 @@ function generateMenu(slot, target){
       if(r.veggie===lastVeg) sc -= 0.8;                      // alterner végé / non-végé
       if(r.veggie && vegC>nonVegC) sc -= 0.7;                // équilibre global du ratio
       if(!r.veggie && nonVegC>vegC) sc -= 0.7;
+      const ri=recent.indexOf(r.id); if(ri>=0) sc -= (ri<6?1.8:0.9);  // plats récemment servis défavorisés
       if(sc>bestScore){ bestScore=sc; best=r; bestIdx=idx; }
     });
     chosen.push(best.id);
@@ -1936,6 +1972,15 @@ function generateMenu(slot, target){
   }
   return chosen;
 }
+// Répartit les plats du menu sur les jours de la semaine (un « ×2 jours » couvre 2 jours)
+const JOURS=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+function dayPlan(menu, startDay){
+  const out=[]; let d=(startDay-1)%7; if(d<0) d+=7;
+  menu.forEach(r=>{ const span=r.twoDays?2:1; const from=d; const to=(d+span-1)%7;
+    out.push({r, from, to, span}); d=(d+span)%7; });
+  return out;
+}
+function dayLabel(p){ return p.span>1 ? `${JOURS[p.from].slice(0,3)}–${JOURS[p.to].slice(0,3)}` : JOURS[p.from].slice(0,3); }
 function swapMeal(slot,i){
   const menu=S.meals.menus[slot]||[];
   const used=new Set(menu);
@@ -1977,6 +2022,32 @@ function buildShoppingList(){
   });
   return map;
 }
+// Liste unifiée : ingrédients des recettes + articles libres, avec info garde-manger
+function shoppingItems(){
+  const shop=buildShoppingList(); const pantry=new Set(S.meals.pantry||[]);
+  const items=[];
+  Object.keys(shop).forEach(k=>items.push({key:k,label:shop[k].label,rayon:shop[k].rayon,count:shop[k].recipes.size,isExtra:false,hidden:pantry.has(k)}));
+  (S.meals.extras||[]).forEach(x=>items.push({key:'x:'+x.id,label:x.label,rayon:x.rayon||guessRayon(x.label),count:0,isExtra:true,id:x.id,hidden:false}));
+  return items;
+}
+function exportShoppingList(){
+  const items=shoppingItems().filter(it=>!it.hidden);
+  const groups=RAYONS.map(ry=>{ const its=items.filter(it=>it.rayon===ry.id).sort((a,b)=>a.label.localeCompare(b.label,'fr'));
+    if(!its.length) return '';
+    return `<div class="rp-section"><h2>${ry.e} ${esc(ry.name)}</h2><table class="rp-tbl"><tbody>${its.map(it=>`<tr><td style="width:26px;text-align:center">☐</td><td>${esc(it.label)}${it.count>1?` <span style="color:#888">(${it.count} plats)</span>`:''}</td></tr>`).join('')}</tbody></table></div>`;
+  }).join('');
+  const soir=(S.meals.menus.soir||[]).map(recipeById).filter(Boolean);
+  const midi=(S.meals.menus.midi||[]).map(recipeById).filter(Boolean);
+  const menuRecap=(soir.length||midi.length)?`<div class="rp-section"><h2>🍽️ Menus de la semaine</h2>
+    ${soir.length?`<div class="rp-note"><b>Dîners :</b> ${soir.map(r=>esc(r.name)).join(' · ')}</div>`:''}
+    ${midi.length?`<div class="rp-note"><b>Déjeuners :</b> ${midi.map(r=>esc(r.name)).join(' · ')}</div>`:''}</div>`:'';
+  printReport(`<div class="rp">
+    <div class="rp-head"><div class="rp-brand">HADEUX<small>Liste de courses</small></div><div class="rp-date">Généré le ${rpDate()}</div></div>
+    ${groups||'<div class="rp-note">Liste vide.</div>'}
+    ${menuRecap}
+    <div class="rp-foot">Document généré par HADEUX le ${rpDate()}.</div>
+  </div>`);
+}
 
 function mealTags(r,showSlot){
   const insp = r.inspiration ? '<span class="mealtag insp">✨ Idée</span>' : '';
@@ -1987,6 +2058,29 @@ function mealTags(r,showSlot){
   const two = r.twoDays ? '<span class="mealtag">×2 jours</span>' : '<span class="mealtag">1 repas</span>';
   const t   = r.time ? `<span class="mealtag">⏱ ${r.time} min</span>` : '';
   return insp+slot+veg+two+t;
+}
+
+// Un plat dans « Ma semaine » (mode liste ou jour), avec pin / voir / actions
+function mealItemHtml(r,i,mode,dayBadge){
+  const pinned=(S.meals.pinned||[]).includes(r.id);
+  const open=!!MEAL_OPEN[r.id];
+  const detail=open?`<div class="mealdetail">
+    <div><b>Ingrédients :</b> ${(r.ingredients||[]).map(esc).join(', ')||'—'}</div>
+    ${r.steps?`<div style="margin-top:6px;white-space:pre-line"><b>Préparation :</b>\n${esc(r.steps)}</div>`:'<div style="margin-top:6px;opacity:.7">Pas d’étapes renseignées — ajoute-les via ✎ dans l’onglet Recettes.</div>'}
+  </div>`:'';
+  const pinBtn=`<button class="iconbtn ${pinned?'pinned':''}" data-mealpin="${r.id}" title="${pinned?'Épinglé — conservé à la régénération':'Épingler (garder ce plat)'}">${pinned?'📌':'📍'}</button>`;
+  const openBtn=`<button class="iconbtn" data-mealopen="${r.id}" title="Voir la recette">${open?'▴':'▾'}</button>`;
+  const actions = mode==='day'
+    ? `${openBtn}${pinBtn}<button class="iconbtn" data-mealup="${i}" title="Monter">↑</button><button class="iconbtn" data-mealdown="${i}" title="Descendre">↓</button>`
+    : `${openBtn}${pinBtn}<button class="iconbtn" data-mealswap="${i}" title="Remplacer ce plat">↻</button><button class="iconbtn danger" data-mealdel="${i}" title="Retirer du menu">✕</button>`;
+  return `<div class="mealitem">
+    <div class="row">
+      ${dayBadge?`<span class="daybadge">${dayBadge}</span>`:''}
+      <div class="em">${r.emoji||'🍽️'}</div>
+      <div class="main"><div class="l1">${esc(r.name)}</div>
+        <div class="l2" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">${mealTags(r)}</div></div>
+      ${actions}
+    </div>${detail}</div>`;
 }
 
 function renderRepas(){
@@ -2045,54 +2139,88 @@ function renderRepas(){
     <button data-mealslot="midi" class="${slot==='midi'?'on':''}">☀️ Déjeuners${midiMenu.length?` · ${midiMenu.length}`:''}</button>
   </div>`;
 
-  const controls=`<div class="card"><div style="padding:18px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+  const f=S.meals.filters||{};
+  const filtersActive = f.veggieOnly || f.maxTime>0 || (f.exclude||'').trim();
+  const inp='padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)';
+  const controls=`<div class="card">
+    <div style="padding:18px 20px 6px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
       <div class="field" style="margin:0"><label>${slot==='midi'?'Déjeuners':'Dîners'} à couvrir</label>
-        <input type="number" id="targetEv" min="1" max="21" value="${target}" style="width:88px;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)"></div>
+        <input type="number" id="targetEv" min="1" max="21" value="${target}" style="width:88px;${inp}"></div>
       <button class="btn primary" id="genMenuBtn" style="margin-top:2px"><span class="plus">🎲</span> ${menu.length?'Régénérer':'Générer'} les ${slotWord}</button>
-      <div style="font-size:12.5px;color:var(--muted);flex:1;min-width:180px;line-height:1.5">Menu équilibré : variété des protéines, alternance végé / non-végé. Les plats « ×2 jours » couvrent 2 repas.</div>
-    </div></div>`;
+      <button class="btn ghost sm" id="toggleFilters" style="margin-top:2px">🎛️ Filtres${filtersActive?' •':''}</button>
+      <div style="font-size:12.5px;color:var(--muted);flex:1;min-width:150px;line-height:1.5">Variété des protéines, alternance végé/non-végé, plats récents évités. Épingle 📌 un plat pour le garder.</div>
+    </div>
+    ${MEAL_SHOW_FILTERS?`<div style="padding:14px 20px 18px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;border-top:1px solid var(--line);margin-top:8px">
+      <div class="field" style="margin:0"><label>Temps max</label>
+        <select id="fltTime" style="${inp}">${[[0,'Peu importe'],[15,'≤ 15 min'],[20,'≤ 20 min'],[30,'≤ 30 min'],[45,'≤ 45 min']].map(([v,l])=>`<option value="${v}" ${f.maxTime===v?'selected':''}>${l}</option>`).join('')}</select></div>
+      <div class="field" style="margin:0"><label>Régime</label>
+        <select id="fltVeg" style="${inp}"><option value="0" ${!f.veggieOnly?'selected':''}>Tout</option><option value="1" ${f.veggieOnly?'selected':''}>Végé uniquement</option></select></div>
+      <div class="field" style="margin:0;flex:1;min-width:170px"><label>Exclure des ingrédients (virgules)</label>
+        <input type="text" id="fltExclude" value="${esc(f.exclude||'')}" placeholder="Ex : champignon, thon" style="width:100%;${inp}"></div>
+    </div>`:''}
+  </div>`;
 
   const covSlot=menu.reduce((s,r)=>s+(r.twoDays?2:1),0);
   const nb2j=menu.filter(r=>r.twoDays).length;
+  const menuBody = MEAL_DAYVIEW
+    ? dayPlan(menu, S.meals.startDay).map((p,i)=>mealItemHtml(p.r,i,'day',dayLabel(p))).join('')
+    : menu.map((r,i)=>mealItemHtml(r,i,'list','')).join('');
   const menuCard = menu.length ? `<div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:18px 18px 4px;gap:10px;flex-wrap:wrap">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:18px 18px 6px;gap:10px;flex-wrap:wrap">
         <div><h2 style="font-size:18px">${slot==='midi'?'Tes déjeuners':'Tes dîners'} de la semaine</h2>
           <p class="sub-t" style="padding:2px 0 0">${menu.length} plat${menu.length>1?'s':''} · couvre ${covSlot} ${slotWord}${nb2j?` · ${nb2j} ${nb2j>1?'tiennent':'tient'} sur 2 jours`:''}</p></div>
-        <button class="btn ghost sm" id="clearMenu">Vider</button>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          ${MEAL_DAYVIEW?`<select id="startDay" style="${inp};padding:7px 10px;font-size:13px">${JOURS.map((j,idx)=>`<option value="${idx+1}" ${S.meals.startDay===idx+1?'selected':''}>Début : ${j}</option>`).join('')}</select>`:''}
+          <button class="btn ghost sm" id="toggleDayView">${MEAL_DAYVIEW?'📋 Liste':'🗓️ Par jour'}</button>
+          <button class="btn ghost sm" id="clearMenu">Vider</button>
+        </div>
       </div>
-      <div class="list">${menu.map((r,i)=>`<div class="row">
-        <div class="em">${r.emoji||'🍽️'}</div>
-        <div class="main"><div class="l1">${esc(r.name)}</div>
-          <div class="l2" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">${mealTags(r)}</div></div>
-        <button class="iconbtn" data-mealswap="${i}" title="Remplacer ce plat">↻</button>
-        <button class="iconbtn danger" data-mealdel="${i}" title="Retirer du menu">✕</button>
-      </div>`).join('')}</div>
+      <div class="list">${menuBody}</div>
     </div>`
     : emptyState(slot==='midi'?'☀️':'🌙',`Aucun ${slot==='midi'?'déjeuner':'dîner'} généré`,`Choisis un nombre de ${slotWord}, puis clique sur « Générer ».`);
 
   let shopCard='';
-  if(anyMenu){
-    const shop=buildShoppingList();
-    const keys=Object.keys(shop);
-    const total=keys.length, done=keys.filter(k=>S.meals.checked[k]).length;
+  if(anyMenu || (S.meals.extras||[]).length){
+    const items=shoppingItems();
+    const visible=items.filter(it=>!it.hidden), hidden=items.filter(it=>it.hidden);
+    const total=visible.length, done=visible.filter(it=>S.meals.checked[it.key]).length;
     const groups=RAYONS.map(ry=>{
-      const items=keys.filter(k=>shop[k].rayon===ry.id).sort((a,b)=>shop[a].label.localeCompare(shop[b].label,'fr'));
-      if(!items.length) return '';
+      const its=visible.filter(it=>it.rayon===ry.id).sort((a,b)=>a.label.localeCompare(b.label,'fr'));
+      if(!its.length) return '';
       return `<div class="rayon-head"><span class="re">${ry.e}</span>${esc(ry.name)}</div>
-        ${items.map(k=>{ const it=shop[k], ck=!!S.meals.checked[k];
-          return `<label class="shop-item ${ck?'done':''}">
-            <input type="checkbox" data-shop="${esc(k)}" ${ck?'checked':''}>
-            <div class="main"><div class="l1">${esc(it.label)}</div>
-              ${it.recipes.size>1?`<div class="l2">${it.recipes.size} plats</div>`:''}</div>
-          </label>`; }).join('')}`;
+        ${its.map(it=>{ const ck=!!S.meals.checked[it.key];
+          return `<div class="shop-item ${ck?'done':''}">
+            <label style="display:flex;align-items:center;gap:13px;flex:1;min-width:0;cursor:pointer;margin:0">
+              <input type="checkbox" data-shop="${esc(it.key)}" ${ck?'checked':''}>
+              <div class="main"><div class="l1">${esc(it.label)}</div>
+                ${it.count>1?`<div class="l2">${it.count} plats</div>`:(it.isExtra?`<div class="l2">ajouté à la main</div>`:'')}</div>
+            </label>
+            ${it.isExtra
+              ? `<button class="iconbtn danger" data-extradel="${it.id}" title="Retirer l’article">✕</button>`
+              : `<button class="iconbtn" data-pantryadd="${esc(it.key)}" title="J’ai déjà — ranger au garde-manger">🗄️</button>`}
+          </div>`; }).join('')}`;
     }).join('');
     shopCard=`<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 18px 2px;gap:10px;flex-wrap:wrap">
         <div><h2 style="font-size:18px">Liste de courses</h2>
           <p class="sub-t" style="padding:2px 0 0"><span id="shopProg">${done} / ${total} coché${total>1?'s':''}</span> · tous repas confondus, rangée par rayon</p></div>
-        <button class="btn ghost sm" id="clearShop">Tout décocher</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn ghost sm" id="printShop">🖨️ Imprimer</button>
+          <button class="btn ghost sm" id="clearShop">Tout décocher</button>
+        </div>
       </div>
-      <div class="list" style="padding:4px 10px 14px">${groups}</div>
+      <div class="list" style="padding:4px 10px 6px">${groups||'<div class="empty" style="padding:20px"><p>Liste vide — ajoute des plats ou un article ci-dessous.</p></div>'}</div>
+      <div style="display:flex;gap:8px;padding:6px 14px 14px;flex-wrap:wrap">
+        <input type="text" id="extraInput" placeholder="Ajouter un article (lait, PQ, café…)" style="flex:1;min-width:160px;${inp}">
+        <button class="btn ghost sm" id="extraAdd">＋ Ajouter</button>
+      </div>
+      ${hidden.length?`<div style="border-top:1px solid var(--line);padding:10px 14px 14px">
+        <button class="btn ghost sm" id="togglePantry" style="width:100%;justify-content:space-between">🥫 Garde-manger — ${hidden.length} article${hidden.length>1?'s':''} que tu as déjà <span>${MEAL_SHOW_PANTRY?'▴':'▾'}</span></button>
+        ${MEAL_SHOW_PANTRY?`<div class="list" style="padding:8px 0 0">${hidden.map(it=>`<div class="shop-item" style="opacity:.75">
+          <div class="main" style="flex:1"><div class="l1">${esc(it.label)}</div></div>
+          <button class="iconbtn" data-pantrydel="${esc(it.key)}" title="Remettre dans la liste">↩︎</button>
+        </div>`).join('')}</div>`:''}
+      </div>`:''}
     </div>`;
   }
 
@@ -2340,8 +2468,10 @@ function formRecette(){
     <div class="field"><label>Tient sur 2 jours&nbsp;?</label>
       <select id="r_2j"><option value="1" ${d.twoDays!==false?'selected':''}>Oui (2 repas)</option><option value="0" ${d.twoDays===false?'selected':''}>Non (1 repas)</option></select></div>
     <div class="field"><label>Ingrédients <span style="font-weight:400;text-transform:none">(un par ligne)</span></label>
-      <textarea id="r_ings" rows="7" placeholder="Pommes de terre&#10;Haché 750g&#10;Carotte…">${esc((d.ingredients||[]).join('\n'))}</textarea>
+      <textarea id="r_ings" rows="6" placeholder="Pommes de terre&#10;Haché 750g&#10;Carotte…">${esc((d.ingredients||[]).join('\n'))}</textarea>
       <div style="font-size:12px;color:var(--muted);margin-top:6px">Ils sont rangés automatiquement par rayon dans la liste de courses.</div></div>
+    <div class="field"><label>Préparation <span style="font-weight:400;text-transform:none">(optionnel)</span></label>
+      <textarea id="r_steps" rows="4" placeholder="Étapes de la recette (une par ligne)…">${esc(d.steps||'')}</textarea></div>
     ${editing?`<button type="button" class="btn ghost" id="recDelBtn" style="width:100%;justify-content:center;color:var(--terra);margin-bottom:10px">Supprimer cette recette</button>`:''}
     <button class="btn primary savebtn" type="submit">${editing?'Enregistrer les modifications':'Créer la recette'}</button>
   </form>`;
@@ -2394,11 +2524,12 @@ function wireModal(type){
     const veggie=!!modalDraft.veggie;
     const meal=modalDraft.meal==='midi'?'midi':'soir';
     const ingredients=M.querySelector('#r_ings').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    const steps=(M.querySelector('#r_steps')?.value||'').trim();
     if(modalDraft.editId){
       const r=recipeById(modalDraft.editId);
-      if(r) Object.assign(r,{name,emoji,time,twoDays,veggie,meal,ingredients});
+      if(r) Object.assign(r,{name,emoji,time,twoDays,veggie,meal,ingredients,steps});
     }else{
-      S.meals.recipes.push({id:'r_'+uid(),name,emoji,time,twoDays,veggie,meal,ingredients});
+      S.meals.recipes.push({id:'r_'+uid(),name,emoji,time,twoDays,veggie,meal,ingredients,steps});
     }
     save(); closeModal(); render();
   };
@@ -2557,7 +2688,9 @@ function wireView(){
   const gm=document.getElementById('genMenuBtn'); if(gm) gm.onclick=()=>{
     const def=MEAL_SLOT==='midi'?5:7;
     const t=Math.max(1,parseInt(document.getElementById('targetEv')?.value)||def);
-    S.meals.targets[MEAL_SLOT]=t; S.meals.menus[MEAL_SLOT]=generateMenu(MEAL_SLOT,t); S.meals.checked={}; save(); render();
+    S.meals.targets[MEAL_SLOT]=t; S.meals.menus[MEAL_SLOT]=generateMenu(MEAL_SLOT,t);
+    const ids=S.meals.menus[MEAL_SLOT]; S.meals.recent=[...ids, ...(S.meals.recent||[]).filter(id=>!ids.includes(id))].slice(0,24);
+    save(); render();
   };
   const tev=document.getElementById('targetEv'); if(tev) tev.onchange=()=>{ S.meals.targets[MEAL_SLOT]=Math.max(1,parseInt(tev.value)|| (MEAL_SLOT==='midi'?5:7)); save(); };
   document.querySelectorAll('[data-mealswap]').forEach(b=>b.onclick=()=>swapMeal(MEAL_SLOT,+b.dataset.mealswap));
@@ -2566,6 +2699,30 @@ function wireView(){
   document.querySelectorAll('[data-recedit]').forEach(b=>b.onclick=()=>{ const r=recipeById(b.dataset.recedit); if(r) openModal('recette',Object.assign({editId:r.id},JSON.parse(JSON.stringify(r)))); });
   const clrMenu=document.getElementById('clearMenu'); if(clrMenu) clrMenu.onclick=()=>{ if(confirm('Vider ce menu ?')){ S.meals.menus[MEAL_SLOT]=[]; save(); render(); } };
   const clrShop=document.getElementById('clearShop'); if(clrShop) clrShop.onclick=()=>{ S.meals.checked={}; save(); render(); };
+  // Épingler / voir / réordonner
+  document.querySelectorAll('[data-mealpin]').forEach(b=>b.onclick=()=>{ const id=b.dataset.mealpin; const p=S.meals.pinned; const i=p.indexOf(id); if(i>=0)p.splice(i,1);else p.push(id); save(); render(); });
+  document.querySelectorAll('[data-mealopen]').forEach(b=>b.onclick=()=>{ const id=b.dataset.mealopen; MEAL_OPEN[id]=!MEAL_OPEN[id]; render(); });
+  const mv=(i,j)=>{ const m=S.meals.menus[MEAL_SLOT]; if(j<0||j>=m.length) return; const t=m[i];m[i]=m[j];m[j]=t; save(); render(); };
+  document.querySelectorAll('[data-mealup]').forEach(b=>b.onclick=()=>mv(+b.dataset.mealup,+b.dataset.mealup-1));
+  document.querySelectorAll('[data-mealdown]').forEach(b=>b.onclick=()=>mv(+b.dataset.mealdown,+b.dataset.mealdown+1));
+  // Filtres de génération
+  const tf=document.getElementById('toggleFilters'); if(tf) tf.onclick=()=>{ MEAL_SHOW_FILTERS=!MEAL_SHOW_FILTERS; render(); };
+  const ft=document.getElementById('fltTime'); if(ft) ft.onchange=()=>{ S.meals.filters.maxTime=parseInt(ft.value)||0; save(); };
+  const fv=document.getElementById('fltVeg'); if(fv) fv.onchange=()=>{ S.meals.filters.veggieOnly=fv.value==='1'; save(); };
+  const fx=document.getElementById('fltExclude'); if(fx) fx.onchange=()=>{ S.meals.filters.exclude=fx.value; save(); };
+  // Vue par jour
+  const tdv=document.getElementById('toggleDayView'); if(tdv) tdv.onclick=()=>{ MEAL_DAYVIEW=!MEAL_DAYVIEW; render(); };
+  const sd=document.getElementById('startDay'); if(sd) sd.onchange=()=>{ S.meals.startDay=parseInt(sd.value)||1; save(); render(); };
+  // Garde-manger « j'ai déjà »
+  document.querySelectorAll('[data-pantryadd]').forEach(b=>b.onclick=()=>{ const k=b.dataset.pantryadd; if(!S.meals.pantry.includes(k)) S.meals.pantry.push(k); delete S.meals.checked[k]; save(); render(); });
+  document.querySelectorAll('[data-pantrydel]').forEach(b=>b.onclick=()=>{ S.meals.pantry=S.meals.pantry.filter(x=>x!==b.dataset.pantrydel); save(); render(); });
+  const tp=document.getElementById('togglePantry'); if(tp) tp.onclick=()=>{ MEAL_SHOW_PANTRY=!MEAL_SHOW_PANTRY; render(); };
+  // Articles libres
+  const addExtra=()=>{ const el=document.getElementById('extraInput'); const v=(el?.value||'').trim(); if(!v) return; S.meals.extras.push({id:uid(),label:v,rayon:guessRayon(v)}); save(); render(); };
+  const ea=document.getElementById('extraAdd'); if(ea) ea.onclick=addExtra;
+  const ei=document.getElementById('extraInput'); if(ei) ei.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); addExtra(); } };
+  document.querySelectorAll('[data-extradel]').forEach(b=>b.onclick=()=>{ const id=b.dataset.extradel; S.meals.extras=S.meals.extras.filter(x=>x.id!==id); delete S.meals.checked['x:'+id]; save(); render(); });
+  const ps=document.getElementById('printShop'); if(ps) ps.onclick=exportShoppingList;
   document.querySelectorAll('[data-shop]').forEach(c=>c.onchange=()=>{
     const k=c.dataset.shop;
     if(c.checked) S.meals.checked[k]=true; else delete S.meals.checked[k];
