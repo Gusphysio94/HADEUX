@@ -374,6 +374,31 @@
     .brand p{display:none}
     .hero .headline{font-size:20px}
   }
+
+  /* ---------- Repas & liste de courses ---------- */
+  .mealtag{font-size:11px;font-weight:700;padding:2px 9px;border-radius:100px;letter-spacing:.02em;
+    background:var(--surface2);border:1px solid var(--line);color:var(--muted)}
+  .mealtag.veg{background:var(--green-soft);color:var(--green);border-color:#cfe0d5}
+  .mealtag.nonveg{background:var(--terra-soft);color:var(--terra);border-color:#ecccbe}
+  .mealtag.insp{background:#F3E9CF;color:#9A7B1E;border-color:#e7d4a3}
+  .iconbtn{color:var(--muted);width:32px;height:32px;border-radius:8px;font-size:15px;flex:none;
+    display:grid;place-items:center;transition:.12s}
+  .iconbtn:hover{background:var(--surface2);color:var(--ink)}
+  .iconbtn.danger:hover{background:var(--terra-soft);color:var(--terra)}
+  .rayon-head{display:flex;align-items:center;gap:9px;padding:15px 14px 6px;font-weight:700;font-size:12px;
+    color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .rayon-head .re{font-size:16px}
+  .rayon-head:first-child{padding-top:8px}
+  .shop-item{display:flex;align-items:center;gap:13px;padding:11px 12px;border-radius:12px;cursor:pointer;transition:.12s}
+  .shop-item:hover{background:var(--surface2)}
+  .shop-item input[type=checkbox]{width:20px;height:20px;flex:none;accent-color:var(--green);cursor:pointer;margin:0}
+  .shop-item .l1{font-weight:600;font-size:14.5px}
+  .shop-item .l2{font-size:12px;color:var(--muted);margin-top:1px}
+  .shop-item.done .l1{text-decoration:line-through;color:var(--faint)}
+  .shop-item.done .l2{opacity:.55}
+  .field textarea{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;
+    background:var(--surface2);font-family:inherit;font-size:15px;color:var(--ink);resize:vertical;outline:none;transition:.15s}
+  .field textarea:focus{border-color:var(--green);background:var(--surface);box-shadow:0 0 0 3px var(--green-soft)}
 </style>
 
 <div class="app">
@@ -411,6 +436,7 @@
     <button data-tab="prevu"><span class="ic">🗓</span> Prévu</button>
     <button data-tab="bilan"><span class="ic">📈</span> Bilan</button>
     <button data-tab="commun"><span class="ic">◈</span> Commun</button>
+    <button data-tab="repas"><span class="ic">🍽️</span> Repas</button>
     <button data-tab="reglages"><span class="ic">⚙</span> Réglages</button>
   </nav>
 
@@ -486,6 +512,163 @@ const DEFAULT_CATS = [
   {id:'divers',  name:'Divers',         e:'✳️', c:'#9A8C6E'},
 ];
 
+/* ============================================================
+   REPAS & COURSES — recettes par défaut (issues du PDF « Plat du soir »)
+   + rayons de supermarché pour ranger la liste de courses automatiquement.
+============================================================ */
+const RAYONS = [
+  {id:'legumes', name:'Fruits & légumes',  e:'🥬'},
+  {id:'viande',  name:'Boucherie',         e:'🥩'},
+  {id:'poisson', name:'Poissonnerie',      e:'🐟'},
+  {id:'frais',   name:'Crèmerie & frais',  e:'🧈'},
+  {id:'epicerie',name:'Épicerie',          e:'🥫'},
+  {id:'herbes',  name:'Épices & herbes',   e:'🌿'},
+  {id:'autre',   name:'Autre',             e:'🛒'},
+];
+// Règles de classement (ordre important : les variantes « épicerie » de la tomate
+// passent avant le rayon légumes, etc.). Première correspondance gagne.
+const RAYON_RULES = [
+  ['epicerie',['pelé','pelee','concentr','coulis','séch','sech','riz','risotto','spaghett','spaguett','pâte','pate','gnocchi','nouille','semoule','farine','bouillon','pain','baguette','wrap','tortilla','pita','cornichon','compote','ananas','huile','sucre','miel','conserve','pizza','céréale','cereale','biscuit','chapelure','crouton','croûton','moutarde','ketchup','mayonnaise','pesto','olive','vinaigre','sésame','sesame','sauce soja','soja','falafel','houmous','pois chiche','pois-chiche','lentille','quinoa','boulgour','polenta','couscous','haricot rouge','flageolet','coco','noix','noisette','amande','pignon']],
+  ['viande',  ['haché','hache','boeuf','bœuf','poulet','lardon','jambon','porc','steak','dinde','saucisse','boulette','viande','bacon','merguez','agneau','veau']],
+  ['poisson', ['saumon','cabillaud','thon','poisson','crevette','gambas','colin','truite','moule','scampi','sardine','maquereau','lieu','merlu','dorade','hareng']],
+  ['frais',   ['fromage','râpé','rape','mozza','parmesan','feta','chèvre','chevre','haloumi','halloumi','tofu','crème','creme','lait','beurre','yaourt','skyr','cheddar','oeuf','œuf','ricotta','burrata','emmental','gruyère','gruyere']],
+  ['herbes',  ['thym','laurier','basilic','persil','ciboulette','origan','menthe','poivre','curry','curcuma','paprika','cumin','gingembre','coriandre','aneth','muscade','romarin','herbe','épice','epice']],
+  ['legumes', ['patate','pomme de terre','carotte','courgette','oignon','échalote','echalote','champignon','céleri','celeri','chou','navet','poivr','brocoli','tomate','ail','salade','roquette','mâche','mache','concombre','épinard','epinard','poireau','haricot','courge','butternut','potimarron','aubergine','fenouil','radis','betterave','edamame','potiron','citrouille','fraise','pomme','banane','citron','avocat','mais','maïs','petit pois']],
+];
+function guessRayon(name){
+  const l=String(name||'').toLowerCase();
+  for(const [rid,ks] of RAYON_RULES){ if(ks.some(k=>l.includes(k))) return rid; }
+  return 'autre';
+}
+// Protéine dominante d'une recette (pour la variété du menu) — dérivée des ingrédients.
+function detectProtein(ings){
+  const s=(ings||[]).join(' ').toLowerCase();
+  if(/lardon|jambon|\bporc\b|bacon|saucisse|merguez/.test(s)) return 'porc';
+  if(/poulet|dinde|volaille/.test(s)) return 'poulet';
+  if(/haché|hache|boeuf|bœuf|steak|veau|agneau|boulette/.test(s)) return 'boeuf';
+  if(/saumon|poisson|thon|cabillaud|crevette|colin|truite|scampi/.test(s)) return 'poisson';
+  return 'vege';
+}
+function DEFAULT_RECIPES(){ return [
+  /* ---- Plats du soir · non végé ---- */
+  {id:'r_hachis', emoji:'🥧', name:'Hachis parmentier', meal:'soir', veggie:false, twoDays:true, time:60,
+    ingredients:['Pommes de terre (purée)','Haché 750g','Fromage râpé','Carotte','Courgette','Compote','Oignons','Lait']},
+  {id:'r_risotto', emoji:'🍚', name:'Risotto (lardons)', meal:'soir', veggie:false, twoDays:true, time:45,
+    ingredients:['Riz risotto','Lardons','Crème épaisse ×2','Parmesan','Bouillon de légumes','Oignon','Champignons']},
+  {id:'r_bolo', emoji:'🍝', name:'Spaghetti bolognaise', meal:'soir', veggie:false, twoDays:true, time:60,
+    ingredients:['Haché 750g','Spaghetti','Concentré de tomate','Tomates pelées','Céleri','Thym, laurier','Carotte','Oignons']},
+  {id:'r_burger', emoji:'🍔', name:'Burger maison', meal:'soir', veggie:false, twoDays:true, time:45,
+    ingredients:['Cheddar','Pain burger','Tomate','Cornichons','Patate douce','Steak burger poulet/bœuf']},
+  {id:'r_pizza', emoji:'🍕', name:'Pizza', meal:'soir', veggie:false, twoDays:true, time:30,
+    ingredients:['Pâte à pizza','Jambon en tranches','Mozzarella','Coulis pizza','Ananas','Champignons','Tomates séchées']},
+  {id:'r_pouletH', emoji:'🍗', name:'Poulet au four (hiver)', meal:'soir', veggie:false, twoDays:true, time:30,
+    ingredients:['Chou-rave','Chou kale','Navet','Carotte','Pommes de terre','Poulet']},
+  {id:'r_pouletE', emoji:'🍗', name:'Poulet au four (été)', meal:'soir', veggie:false, twoDays:true, time:30,
+    ingredients:['Poivrons','Patate douce','Courgette','Poulet','Chou-fleur']},
+  {id:'r_feta', emoji:'🧀', name:'Feta au four & lardons', meal:'soir', veggie:false, twoDays:false, time:20,
+    ingredients:['Lardons','Feta','Pâtes courtes','Basilic','Ail']},
+  {id:'r_broco', emoji:'🥦', name:'Brocoli poulet', meal:'soir', veggie:false, twoDays:false, time:20,
+    ingredients:['Poulet','Brocolis','Semoule']},
+  {id:'r_farci', emoji:'🫑', name:'Poivrons / courgettes farcis', meal:'soir', veggie:false, twoDays:true, time:30,
+    ingredients:['Poivrons ou courgettes','Haché','Oignons','Semoule','Tomates pelées','Poivron jaune/rouge','Fromage râpé']},
+  /* ---- Plats du soir · végé ---- */
+  {id:'r_tarte_potimarron', emoji:'🎃', name:'Tarte au potimarron', meal:'soir', veggie:true, twoDays:true, time:45,
+    ingredients:['Pâte brisée','Potimarron','Chèvre bûche','Fromage blanc','Salade','Noix']},
+  {id:'r_risotto_vg', emoji:'🍚', name:'Risotto végé (tofu)', meal:'soir', veggie:true, twoDays:true, time:30,
+    ingredients:['Riz risotto','Tofu fumé','Crème épaisse ×2','Parmesan','Bouillon de légumes','Oignon','Champignons']},
+  {id:'r_quiche_courg', emoji:'🥧', name:'Quiche courgette-tomate', meal:'soir', veggie:true, twoDays:false, time:30,
+    ingredients:['Pâte feuilletée','Courgette','Tomate grande','Crème liquide','Salade','Chèvre','Œufs']},
+  {id:'r_feuillete_chevre', emoji:'🧀', name:'Feuilleté au chèvre', meal:'soir', veggie:true, twoDays:false, time:30,
+    ingredients:['Pâte feuilletée','Chèvre','Miel','Pomme','Noix','Salade']},
+  {id:'r_quiche_thon', emoji:'🐟', name:'Quiche au thon', meal:'soir', veggie:false, twoDays:true, time:30,
+    ingredients:['Pâte feuilletée','Thon','Crème liquide','Œufs','Fromage râpé']},
+  {id:'r_salade_pates', emoji:'🥗', name:'Salade de pâtes XXL', meal:'soir', veggie:true, twoDays:true, time:30,
+    ingredients:['Feta ×2','Tomates cerises','Pâtes grecques','Avocat ×2','Pomme']},
+  {id:'r_bowl1', emoji:'🥗', name:'Bowl végé 1', meal:'soir', veggie:true, twoDays:false, time:20,
+    ingredients:['Riz','Poivrons rouge/jaune','Citron','Brocolis ou chou-fleur','Feta','Yaourt grec','Oignon rouge','Falafel ou tofu']},
+  {id:'r_bowl2', emoji:'🫑', name:'Bowl végé 2', meal:'soir', veggie:true, twoDays:false, time:20,
+    ingredients:['Couscous perlé','Patate douce','Halloumi','Oignons rouge','Courgette ou aubergine','Poivrons rouge','Yaourt grec','Citron','Falafel ou tofu']},
+  {id:'r_bowl3', emoji:'🥑', name:'Bowl végé 3', meal:'soir', veggie:true, twoDays:false, time:20,
+    ingredients:['Riz','Oignons rouge','Avocat','Poivrons rouge','Courgette','Feta','Yaourt grec','Citron','Falafel ou tofu']},
+  /* ---- Plats du midi ---- */
+  {id:'r_croque_tofu', emoji:'🥪', name:'Croque tofu', meal:'midi', veggie:true, twoDays:false, time:15,
+    ingredients:['Pain','Tofu fumé','Grande tomate','Tranches de fromage']},
+  {id:'r_sdp_express', emoji:'🥗', name:'Salade de pâtes express', meal:'midi', veggie:true, twoDays:false, time:15,
+    ingredients:['Concombre','Feta','Tomates cerises','Riz ou pâtes complètes','Falafel']},
+  {id:'r_couscous_choufleur', emoji:'🍚', name:'Couscous perlé chou-fleur', meal:'midi', veggie:true, twoDays:false, time:15,
+    ingredients:['Couscous perlé','Chou-fleur','Carotte','Halloumi']},
+  {id:'r_sdp_haloumi', emoji:'🧀', name:'Salade Halloumi', meal:'midi', veggie:true, twoDays:false, time:15,
+    ingredients:['Concombre','Halloumi','Tomates cerises','Riz ou pâtes complètes']},
+  {id:'r_wraps_thon', emoji:'🌯', name:'Wraps maison thon', meal:'midi', veggie:false, twoDays:false, time:15,
+    ingredients:['Wraps','Avocat','Thon','Mayonnaise','Tomates cerises']},
+  {id:'r_sandwich_boulette', emoji:'🥖', name:'Sandwich boulettes', meal:'midi', veggie:false, twoDays:false, time:15,
+    ingredients:['Baguette','Tranches de fromage','Boulettes','Grande tomate']},
+
+  /* ---- Idées « inspiration » · healthy (non issues des PDF) — dîners ---- */
+  {id:'ri_saumon_legumes', emoji:'🐟', name:'Saumon rôti & légumes', meal:'soir', veggie:false, twoDays:false, time:30, inspiration:true,
+    ingredients:['Filet de saumon','Brocolis','Patate douce','Citron','Huile d\'olive','Ail']},
+  {id:'ri_dhal_corail', emoji:'🍛', name:'Curry de lentilles corail', meal:'soir', veggie:true, twoDays:true, time:30, inspiration:true,
+    ingredients:['Lentilles corail','Lait de coco','Épinards','Oignon','Tomates pelées','Curry','Gingembre','Riz']},
+  {id:'ri_chili_sincarne', emoji:'🌶️', name:'Chili sin carne', meal:'soir', veggie:true, twoDays:true, time:40, inspiration:true,
+    ingredients:['Haricots rouges','Maïs','Tomates pelées','Poivrons','Oignon','Cumin','Riz']},
+  {id:'ri_gnocchis', emoji:'🥔', name:'Poêlée de gnocchis épinards-tomates', meal:'soir', veggie:true, twoDays:false, time:20, inspiration:true,
+    ingredients:['Gnocchis','Épinards','Tomates cerises','Ail','Parmesan','Pignons']},
+  {id:'ri_papillote_cabillaud', emoji:'🐟', name:'Papillote de cabillaud', meal:'soir', veggie:false, twoDays:false, time:30, inspiration:true,
+    ingredients:['Cabillaud','Courgette','Tomate','Citron','Herbes de Provence','Riz complet']},
+  {id:'ri_tajine_poulet', emoji:'🍗', name:'Tajine de poulet aux légumes', meal:'soir', veggie:false, twoDays:true, time:45, inspiration:true,
+    ingredients:['Poulet','Courgette','Carotte','Pois chiches','Oignon','Semoule','Cumin','Coriandre']},
+  {id:'ri_wok_crevettes', emoji:'🦐', name:'Wok de crevettes & légumes', meal:'soir', veggie:false, twoDays:false, time:25, inspiration:true,
+    ingredients:['Crevettes','Brocolis','Poivrons','Carotte','Nouilles','Sauce soja','Gingembre','Ail']},
+  {id:'ri_boulettes_dinde', emoji:'🍽️', name:'Boulettes de dinde & courgettes', meal:'soir', veggie:false, twoDays:true, time:35, inspiration:true,
+    ingredients:['Haché de dinde','Courgette','Tomates pelées','Oignon','Ail','Boulgour']},
+  {id:'ri_gratin_choufleur', emoji:'🧀', name:'Gratin de chou-fleur', meal:'soir', veggie:true, twoDays:true, time:40, inspiration:true,
+    ingredients:['Chou-fleur','Crème liquide','Fromage râpé','Muscade','Œufs']},
+  {id:'ri_poulet_patatedouce', emoji:'🍗', name:'Poulet rôti, patate douce & haricots verts', meal:'soir', veggie:false, twoDays:true, time:35, inspiration:true,
+    ingredients:['Poulet','Patate douce','Haricots verts','Ail','Huile d\'olive']},
+  {id:'ri_minestrone', emoji:'🍲', name:'Soupe minestrone', meal:'soir', veggie:true, twoDays:true, time:40, inspiration:true,
+    ingredients:['Haricots blancs','Courgette','Carotte','Céleri','Tomates pelées','Pâtes','Oignon','Basilic']},
+  {id:'ri_aubergines_boulgour', emoji:'🍆', name:'Aubergines rôties & boulgour à la feta', meal:'soir', veggie:true, twoDays:true, time:35, inspiration:true,
+    ingredients:['Aubergine','Boulgour','Tomates cerises','Feta','Menthe','Citron']},
+  {id:'ri_saumon_lentilles', emoji:'🐟', name:'Saumon, lentilles vertes & épinards', meal:'soir', veggie:false, twoDays:false, time:30, inspiration:true,
+    ingredients:['Filet de saumon','Lentilles','Épinards','Échalote','Citron']},
+  {id:'ri_omelette_legumes', emoji:'🍳', name:'Omelette aux légumes', meal:'soir', veggie:true, twoDays:false, time:20, inspiration:true,
+    ingredients:['Œufs','Courgette','Poivrons','Oignon','Fromage râpé','Salade']},
+  {id:'ri_curry_vert_poulet', emoji:'🍛', name:'Curry vert de poulet', meal:'soir', veggie:false, twoDays:true, time:30, inspiration:true,
+    ingredients:['Poulet','Lait de coco','Haricots verts','Poivrons','Pâte de curry vert','Riz','Coriandre']},
+
+  /* ---- Idées « inspiration » · healthy — déjeuners (légers, rapides) ---- */
+  {id:'ri_cesar_poulet', emoji:'🥗', name:'Salade César légère au poulet', meal:'midi', veggie:false, twoDays:false, time:15, inspiration:true,
+    ingredients:['Poulet','Salade romaine','Parmesan','Croûtons','Yaourt grec','Citron']},
+  {id:'ri_wrap_poulet_avocat', emoji:'🌯', name:'Wrap poulet-avocat', meal:'midi', veggie:false, twoDays:false, time:10, inspiration:true,
+    ingredients:['Tortilla','Poulet','Avocat','Salade','Tomate','Yaourt grec']},
+  {id:'ri_salade_quinoa_feta', emoji:'🥗', name:'Salade de quinoa, feta & concombre', meal:'midi', veggie:true, twoDays:false, time:15, inspiration:true,
+    ingredients:['Quinoa','Concombre','Tomates cerises','Feta','Menthe','Citron','Huile d\'olive']},
+  {id:'ri_tartine_avocat_oeuf', emoji:'🥑', name:'Tartine avocat & œuf poché', meal:'midi', veggie:true, twoDays:false, time:10, inspiration:true,
+    ingredients:['Pain complet','Avocat','Œufs','Citron','Roquette']},
+  {id:'ri_bowl_poischiches', emoji:'🥗', name:'Bowl pois chiches rôtis', meal:'midi', veggie:true, twoDays:false, time:15, inspiration:true,
+    ingredients:['Pois chiches','Quinoa','Carotte','Avocat','Épinards','Houmous','Citron']},
+  {id:'ri_salade_lentilles_chevre', emoji:'🥗', name:'Salade lentilles & chèvre', meal:'midi', veggie:true, twoDays:false, time:15, inspiration:true,
+    ingredients:['Lentilles','Betterave','Chèvre','Roquette','Noix','Vinaigre balsamique']},
+  {id:'ri_soupe_legumes', emoji:'🍲', name:'Soupe de légumes express', meal:'midi', veggie:true, twoDays:false, time:20, inspiration:true,
+    ingredients:['Courgette','Carotte','Poireau','Pomme de terre','Oignon','Bouillon de légumes']},
+  {id:'ri_poke_saumon', emoji:'🍣', name:'Poke bowl saumon', meal:'midi', veggie:false, twoDays:false, time:15, inspiration:true,
+    ingredients:['Filet de saumon','Riz','Avocat','Concombre','Edamame','Carotte','Sauce soja','Sésame']},
+  {id:'ri_salade_grecque', emoji:'🥗', name:'Salade grecque', meal:'midi', veggie:true, twoDays:false, time:10, inspiration:true,
+    ingredients:['Concombre','Tomate','Feta','Olives','Oignon rouge','Poivron','Huile d\'olive']},
+  {id:'ri_tartine_saumon_fume', emoji:'🐟', name:'Tartine saumon fumé & fromage frais', meal:'midi', veggie:false, twoDays:false, time:10, inspiration:true,
+    ingredients:['Pain complet','Saumon fumé','Fromage frais','Aneth','Citron','Roquette']},
+  {id:'ri_omelette_herbes', emoji:'🍳', name:'Omelette aux herbes & salade', meal:'midi', veggie:true, twoDays:false, time:10, inspiration:true,
+    ingredients:['Œufs','Herbes fraîches','Salade','Tomates cerises']},
+  {id:'ri_salade_riz_thon', emoji:'🥗', name:'Salade de riz complet, thon & maïs', meal:'midi', veggie:false, twoDays:false, time:15, inspiration:true,
+    ingredients:['Riz complet','Thon','Maïs','Tomate','Poivron','Oignon']},
+  {id:'ri_mezze_houmous', emoji:'🥕', name:'Assiette mezze houmous & crudités', meal:'midi', veggie:true, twoDays:false, time:10, inspiration:true,
+    ingredients:['Houmous','Carotte','Concombre','Poivron','Pain pita','Olives']},
+  {id:'ri_veloute_butternut', emoji:'🍲', name:'Velouté de butternut', meal:'midi', veggie:true, twoDays:false, time:25, inspiration:true,
+    ingredients:['Courge butternut','Oignon','Lait de coco','Bouillon de légumes','Muscade']},
+  {id:'ri_salade_pates_pesto', emoji:'🥗', name:'Salade de pâtes complètes au pesto', meal:'midi', veggie:true, twoDays:false, time:15, inspiration:true,
+    ingredients:['Pâtes complètes','Tomates cerises','Mozzarella','Roquette','Pesto','Pignons']},
+]; }
+
 /* Paramètres fiscaux belges — sources officielles vérifiées (SPF Finances, INASTI,
    secrétariats sociaux) en juillet 2026. Deux exercices disponibles. */
 const FISCAL = {
@@ -532,6 +715,7 @@ const DEFAULT_STATE = () => ({
     m1:{salaireBrut:0, recettes:0, fraisPro:0, statut:'principal', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false},
     m2:{salaireBrut:0, recettes:0, fraisPro:0, statut:'complementaire', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false}
   },
+  meals:{recipes:DEFAULT_RECIPES(), menus:{soir:[],midi:[]}, targets:{soir:7,midi:5}, checked:{}},
   ui:{month:monthKey(todayISO())}, version:3
 });
 
@@ -539,6 +723,9 @@ let S = load();
 let VIEW = 'dash';
 let DEP_FILTER = 'all';
 let REV_SUB = 'apercu';   // sous-onglet actif des Revenus : apercu | annuel | mensuel
+let MEAL_SUB = 'menu';    // sous-onglet actif des Repas : menu | recettes
+let MEAL_SLOT = 'soir';   // créneau planifié dans « Ma semaine » : soir | midi
+let MEAL_LIB = 'all';     // filtre de la bibliothèque de recettes : all | soir | midi
 
 // Normalise/complète un état (utilisé au chargement local ET pour les données reçues du cloud)
 function migrate(s){
@@ -567,6 +754,19 @@ function migrate(s){
   }
   if(!s.profils) s.profils={};
   (s.members||[]).forEach((m,i)=>{ s.profils[m.id]=Object.assign({salaireBrut:0,recettes:0,fraisPro:0,statut:i===0?'principal':'complementaire',communal:0.07,enfants:0,va:[0,0,0,0],nouvelIndep:false,retroLink:false}, s.profils[m.id]||{}); if(!Array.isArray(s.profils[m.id].va)) s.profils[m.id].va=[0,0,0,0]; });
+  // Repas & courses
+  if(!s.meals||typeof s.meals!=='object') s.meals={};
+  if(!Array.isArray(s.meals.recipes)) s.meals.recipes=DEFAULT_RECIPES();
+  else s.meals.recipes.forEach(r=>{ if(r.meal!=='midi') r.meal='soir'; if(typeof r.veggie!=='boolean') r.veggie=false; if(!Array.isArray(r.ingredients)) r.ingredients=[]; });
+  // Deux créneaux (soir/midi) — migre l'ancien format à menu unique
+  if(!s.meals.menus||typeof s.meals.menus!=='object') s.meals.menus={soir:Array.isArray(s.meals.menu)?s.meals.menu:[], midi:[]};
+  if(!Array.isArray(s.meals.menus.soir)) s.meals.menus.soir=[];
+  if(!Array.isArray(s.meals.menus.midi)) s.meals.menus.midi=[];
+  if(!s.meals.targets||typeof s.meals.targets!=='object') s.meals.targets={soir:(typeof s.meals.targetEvenings==='number'?s.meals.targetEvenings:7), midi:5};
+  if(typeof s.meals.targets.soir!=='number') s.meals.targets.soir=7;
+  if(typeof s.meals.targets.midi!=='number') s.meals.targets.midi=5;
+  delete s.meals.menu; delete s.meals.targetEvenings;
+  if(!s.meals.checked||typeof s.meals.checked!=='object') s.meals.checked={};
   return s;
 }
 function load(){
@@ -723,7 +923,7 @@ function render(){
   const main=document.getElementById('main');
   const routes={dash:renderDash,foyer:renderFoyer,depenses:renderDepenses,
     rev1:()=>renderRevenus(0), rev2:()=>renderRevenus(1),
-    retro:renderRetro, prevu:renderPrevu, bilan:renderBilan, commun:renderCommun,reglages:renderReglages, import:renderImport};
+    retro:renderRetro, prevu:renderPrevu, bilan:renderBilan, commun:renderCommun,repas:renderRepas,reglages:renderReglages, import:renderImport};
   main.innerHTML = (routes[VIEW]||renderDash)();
   wireView();
 }
@@ -1700,6 +1900,207 @@ function renderCommun(){
   </section>`;
 }
 
+/* ============================================================
+   REPAS & LISTE DE COURSES
+============================================================ */
+function recipeById(id){ return (S.meals.recipes||[]).find(r=>r.id===id); }
+
+// Génère un menu équilibré pour un créneau (soir|midi) couvrant ~`target` repas :
+// - pas de répétition de la même protéine (bœuf/poulet/porc/poisson) dans la semaine,
+// - alternance végé / non-végé,
+// - un plat « ×2 jours » compte pour 2 repas.
+function generateMenu(slot, target){
+  const pool=(S.meals.recipes||[]).filter(r=>(r.meal||'soir')===slot);
+  if(!pool.length) return [];
+  const chosen=[]; let evenings=0;
+  const protCount={}; let lastProt=null, lastVeg=null; let vegC=0, nonVegC=0;
+  while(evenings<target && pool.length){
+    let best=null, bestScore=-1e9, bestIdx=-1;
+    pool.forEach((r,idx)=>{
+      const prot=detectProtein(r.ingredients||[]);
+      let sc=Math.random()*0.6;                              // aléa (départage)
+      sc -= (protCount[prot]||0)*1.3;                        // variété des protéines sur la semaine
+      if(prot===lastProt && prot!=='vege') sc -= 2.2;        // jamais la même viande deux soirs de suite
+      if(r.veggie===lastVeg) sc -= 0.8;                      // alterner végé / non-végé
+      if(r.veggie && vegC>nonVegC) sc -= 0.7;                // équilibre global du ratio
+      if(!r.veggie && nonVegC>vegC) sc -= 0.7;
+      if(sc>bestScore){ bestScore=sc; best=r; bestIdx=idx; }
+    });
+    chosen.push(best.id);
+    pool.splice(bestIdx,1);
+    const prot=detectProtein(best.ingredients||[]);
+    protCount[prot]=(protCount[prot]||0)+1;
+    lastProt=prot; lastVeg=best.veggie;
+    if(best.veggie) vegC++; else nonVegC++;
+    evenings += best.twoDays?2:1;
+  }
+  return chosen;
+}
+function swapMeal(slot,i){
+  const menu=S.meals.menus[slot]||[];
+  const used=new Set(menu);
+  const cands=(S.meals.recipes||[]).filter(r=>(r.meal||'soir')===slot && !used.has(r.id));
+  if(!cands.length){ alert('Toutes tes recettes de ce créneau sont déjà dans le menu. Ajoute-en dans l’onglet « Recettes ».'); return; }
+  // Préfère une protéine différente des plats voisins
+  const cur=menu.map(recipeById).filter(Boolean);
+  const neighbours=[cur[i-1],cur[i+1]].filter(Boolean).map(r=>detectProtein(r.ingredients||[]));
+  const diff=cands.filter(r=>!neighbours.includes(detectProtein(r.ingredients||[])));
+  const from=diff.length?diff:cands;
+  menu[i]=from[Math.floor(Math.random()*from.length)].id;
+  save(); render();
+}
+
+// Clé de regroupement d'un ingrédient (accents, quantités et pluriels neutralisés)
+const COMBINING_MARKS = new RegExp('[\\u0300-\\u036f]','g');   // accents décomposés (NFD)
+function ingKey(raw){
+  return String(raw||'').toLowerCase()
+    .normalize('NFD').replace(COMBINING_MARKS,'')        // accents
+    .replace(/[×x]\s*\d+/g,' ')                          // « ×2 », « x1 »
+    .replace(/\d+\s*(g|kg|cl|ml|l)\b/g,' ')              // « 750g »
+    .replace(/\d+/g,' ')
+    .replace(/[^a-z ]/g,' ')
+    .replace(/s\b/g,'')                                  // pluriels simples
+    .replace(/\s+/g,' ').trim();
+}
+function buildShoppingList(){
+  const ids=[].concat(S.meals.menus.soir||[], S.meals.menus.midi||[]);
+  const menu=ids.map(recipeById).filter(Boolean);
+  const map={};
+  menu.forEach(r=>{
+    (r.ingredients||[]).forEach(raw=>{
+      const key=ingKey(raw); if(!key) return;
+      if(!map[key]) map[key]={label:raw, rayon:guessRayon(raw), recipes:new Set()};
+      // Garde le libellé le plus détaillé (le plus long)
+      if(String(raw).length>String(map[key].label).length) map[key].label=raw;
+      map[key].recipes.add(r.name);
+    });
+  });
+  return map;
+}
+
+function mealTags(r,showSlot){
+  const insp = r.inspiration ? '<span class="mealtag insp">✨ Idée</span>' : '';
+  const slot = showSlot ? (r.meal==='midi'?'<span class="mealtag">☀️ Midi</span>':'<span class="mealtag">🌙 Soir</span>') : '';
+  const veg = r.veggie
+    ? '<span class="mealtag veg">🌱 Végé</span>'
+    : '<span class="mealtag nonveg">🍖 Non végé</span>';
+  const two = r.twoDays ? '<span class="mealtag">×2 jours</span>' : '<span class="mealtag">1 repas</span>';
+  const t   = r.time ? `<span class="mealtag">⏱ ${r.time} min</span>` : '';
+  return insp+slot+veg+two+t;
+}
+
+function renderRepas(){
+  const sub=MEAL_SUB;
+  const recipes=S.meals.recipes||[];
+  const soirMenu=(S.meals.menus.soir||[]).map(recipeById).filter(Boolean);
+  const midiMenu=(S.meals.menus.midi||[]).map(recipeById).filter(Boolean);
+  const soirEv=soirMenu.reduce((s,r)=>s+(r.twoDays?2:1),0);
+  const midiEv=midiMenu.reduce((s,r)=>s+(r.twoDays?2:1),0);
+  const anyMenu=soirMenu.length||midiMenu.length;
+
+  const hero=`<div class="card hero" style="background:linear-gradient(160deg,#BF5A34,#8f3f22)">
+    <div class="eyebrow">Repas & liste de courses</div>
+    <div class="headline">${anyMenu
+      ? `Ta semaine : <b>${soirEv} dîner${soirEv>1?'s':''}</b>${midiMenu.length?` · <b>${midiEv} déjeuner${midiEv>1?'s':''}</b>`:''}`
+      : `Génère un menu <b>équilibré</b> en un clic`}</div>
+    <div class="sub">${anyMenu
+      ? `Ta liste de courses combine tous les repas prévus — un seul passage en magasin, coche au fur et à mesure.`
+      : `Des idées de plats midi & soir (végé et non-végé) et la liste de courses associée, sans te prendre la tête.`}</div>
+  </div>`;
+
+  const subnav=`<div class="subnav">
+    <button data-mealsub="menu" class="${sub==='menu'?'on':''}">🍲 Ma semaine</button>
+    <button data-mealsub="recettes" class="${sub==='recettes'?'on':''}">📖 Recettes</button>
+  </div>`;
+
+  if(sub==='recettes'){
+    const filt=MEAL_LIB;
+    const shown=recipes.filter(r=>filt==='all'?true:(r.meal||'soir')===filt);
+    const fbtn=(k,l)=>`<button class="filt ${filt===k?'on':''}" data-meallib="${k}">${l}</button>`;
+    const lib=`<div class="toolbar">
+      <div class="filters">${fbtn('all','Toutes')}${fbtn('soir','🌙 Dîners')}${fbtn('midi','☀️ Déjeuners')}</div>
+      <button class="btn primary sm" data-add="recette"><span class="plus">+</span> Nouvelle recette</button></div>
+      <div class="card">${shown.length?`<div class="list">${shown.map(r=>`<div class="row">
+        <div class="em">${r.emoji||'🍽️'}</div>
+        <div class="main"><div class="l1">${esc(r.name)}</div>
+          <div class="l2" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">${mealTags(r,true)}<span class="mealtag">${(r.ingredients||[]).length} ingr.</span></div></div>
+        <button class="btn ghost sm" data-mealadd="${r.id}" title="Ajouter au menu">＋ Menu</button>
+        <button class="iconbtn" data-recedit="${r.id}" title="Modifier">✎</button>
+      </div>`).join('')}</div>`
+      : emptyState('📖','Aucune recette','Ajoute une recette ou change de filtre.')}</div>
+      <div class="infoNote">✎ Modifie une recette (ingrédients, temps, midi/soir, végé/non-végé…) ou ajoutes-en : elles entrent aussitôt dans le générateur. ＋ Menu ajoute un plat au bon créneau.</div>`;
+    return `<section class="view grid">${hero}${subnav}${lib}</section>`;
+  }
+
+  // ----- Sous-onglet « Ma semaine » -----
+  const slot=MEAL_SLOT;
+  const menu = slot==='midi'?midiMenu:soirMenu;
+  const target = (S.meals.targets&&S.meals.targets[slot]) || (slot==='midi'?5:7);
+  const slotWord = slot==='midi'?'déjeuners':'dîners';
+
+  const slotSeg=`<div class="subnav" style="margin-top:2px">
+    <button data-mealslot="soir" class="${slot==='soir'?'on':''}">🌙 Dîners${soirMenu.length?` · ${soirMenu.length}`:''}</button>
+    <button data-mealslot="midi" class="${slot==='midi'?'on':''}">☀️ Déjeuners${midiMenu.length?` · ${midiMenu.length}`:''}</button>
+  </div>`;
+
+  const controls=`<div class="card"><div style="padding:18px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div class="field" style="margin:0"><label>${slot==='midi'?'Déjeuners':'Dîners'} à couvrir</label>
+        <input type="number" id="targetEv" min="1" max="21" value="${target}" style="width:88px;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)"></div>
+      <button class="btn primary" id="genMenuBtn" style="margin-top:2px"><span class="plus">🎲</span> ${menu.length?'Régénérer':'Générer'} les ${slotWord}</button>
+      <div style="font-size:12.5px;color:var(--muted);flex:1;min-width:180px;line-height:1.5">Menu équilibré : variété des protéines, alternance végé / non-végé. Les plats « ×2 jours » couvrent 2 repas.</div>
+    </div></div>`;
+
+  const menuCard = menu.length ? `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 18px 4px;gap:10px;flex-wrap:wrap">
+        <h2 style="font-size:18px">${slot==='midi'?'Tes déjeuners':'Tes dîners'} de la semaine</h2>
+        <button class="btn ghost sm" id="clearMenu">Vider</button>
+      </div>
+      <div class="list">${menu.map((r,i)=>`<div class="row">
+        <div class="em">${r.emoji||'🍽️'}</div>
+        <div class="main"><div class="l1">${esc(r.name)}</div>
+          <div class="l2" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">${mealTags(r)}</div></div>
+        <button class="iconbtn" data-mealswap="${i}" title="Remplacer ce plat">↻</button>
+        <button class="iconbtn danger" data-mealdel="${i}" title="Retirer du menu">✕</button>
+      </div>`).join('')}</div>
+    </div>`
+    : emptyState(slot==='midi'?'☀️':'🌙',`Aucun ${slot==='midi'?'déjeuner':'dîner'} généré`,`Choisis un nombre de ${slotWord}, puis clique sur « Générer ».`);
+
+  let shopCard='';
+  if(anyMenu){
+    const shop=buildShoppingList();
+    const keys=Object.keys(shop);
+    const total=keys.length, done=keys.filter(k=>S.meals.checked[k]).length;
+    const groups=RAYONS.map(ry=>{
+      const items=keys.filter(k=>shop[k].rayon===ry.id).sort((a,b)=>shop[a].label.localeCompare(shop[b].label,'fr'));
+      if(!items.length) return '';
+      return `<div class="rayon-head"><span class="re">${ry.e}</span>${esc(ry.name)}</div>
+        ${items.map(k=>{ const it=shop[k], ck=!!S.meals.checked[k];
+          return `<label class="shop-item ${ck?'done':''}">
+            <input type="checkbox" data-shop="${esc(k)}" ${ck?'checked':''}>
+            <div class="main"><div class="l1">${esc(it.label)}</div>
+              ${it.recipes.size>1?`<div class="l2">${it.recipes.size} plats</div>`:''}</div>
+          </label>`; }).join('')}`;
+    }).join('');
+    shopCard=`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 18px 2px;gap:10px;flex-wrap:wrap">
+        <div><h2 style="font-size:18px">Liste de courses</h2>
+          <p class="sub-t" style="padding:2px 0 0"><span id="shopProg">${done} / ${total} coché${total>1?'s':''}</span> · tous repas confondus, rangée par rayon</p></div>
+        <button class="btn ghost sm" id="clearShop">Tout décocher</button>
+      </div>
+      <div class="list" style="padding:4px 10px 14px">${groups}</div>
+    </div>`;
+  }
+
+  return `<section class="view grid">
+    ${hero}
+    ${subnav}
+    ${slotSeg}
+    ${controls}
+    ${menuCard}
+    ${shopCard}
+  </section>`;
+}
+
 /* ---------- RÉGLAGES ---------- */
 function renderReglages(){
   return `<section class="view grid">
@@ -1795,7 +2196,7 @@ let modalDraft={};
 function openModal(type,preset){
   modalDraft = Object.assign({scope:'commune',paidBy:'commun',categoryId:'courses',date:todayISO(),memberId:S.members[0].id,recurring:false},preset||{});
   const M=document.getElementById('modal');
-  M.innerHTML = ({depense:formDepense,revenu:formRevenu,versement:formVersement,recurrent:formRecurrent,retroValider:formRetroValider}[type])();
+  M.innerHTML = ({depense:formDepense,revenu:formRevenu,versement:formVersement,recurrent:formRecurrent,retroValider:formRetroValider,recette:formRecette}[type])();
   document.getElementById('overlay').classList.add('show');
   wireModal(type);
   setTimeout(()=>M.querySelector('input[data-focus]')?.focus(),120);
@@ -1908,6 +2309,39 @@ function formRetroValider(){
   </div>`;
 }
 
+function formRecette(){
+  const d=modalDraft, editing=!!d.editId;
+  if(!d.meal) d.meal=MEAL_SLOT||'soir';   // défaut = créneau courant
+  return `<div class="mhead"><h2>${editing?'Modifier la recette':'Nouvelle recette'}</h2><button class="x" data-close>✕</button></div>
+  <form id="frmRecette">
+    <div class="field"><label>Nom du plat</label>
+      <input type="text" id="r_name" data-focus value="${esc(d.name||'')}" placeholder="Ex : Gratin de courgettes" required></div>
+    <div class="field two">
+      <div class="field"><label>Emoji</label><input type="text" id="r_emoji" value="${esc(d.emoji||'🍽️')}" maxlength="4"></div>
+      <div class="field"><label>Temps (min)</label><input type="number" id="r_time" min="0" step="5" value="${d.time!=null?d.time:30}"></div>
+    </div>
+    <div class="field two">
+      <div class="field"><label>Moment</label>
+        <div class="seg" id="segMeal">
+          <button type="button" data-meal="soir" class="${d.meal==='midi'?'':'on'}">🌙 Soir</button>
+          <button type="button" data-meal="midi" class="${d.meal==='midi'?'on':''}">☀️ Midi</button>
+        </div></div>
+      <div class="field"><label>Type</label>
+        <div class="seg" id="segVeg">
+          <button type="button" data-veg="0" class="${d.veggie?'':'on'}">🍖 Non végé</button>
+          <button type="button" data-veg="1" class="${d.veggie?'on':''}">🌱 Végé</button>
+        </div></div>
+    </div>
+    <div class="field"><label>Tient sur 2 jours&nbsp;?</label>
+      <select id="r_2j"><option value="1" ${d.twoDays!==false?'selected':''}>Oui (2 repas)</option><option value="0" ${d.twoDays===false?'selected':''}>Non (1 repas)</option></select></div>
+    <div class="field"><label>Ingrédients <span style="font-weight:400;text-transform:none">(un par ligne)</span></label>
+      <textarea id="r_ings" rows="7" placeholder="Pommes de terre&#10;Haché 750g&#10;Carotte…">${esc((d.ingredients||[]).join('\n'))}</textarea>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px">Ils sont rangés automatiquement par rayon dans la liste de courses.</div></div>
+    ${editing?`<button type="button" class="btn ghost" id="recDelBtn" style="width:100%;justify-content:center;color:var(--terra);margin-bottom:10px">Supprimer cette recette</button>`:''}
+    <button class="btn primary savebtn" type="submit">${editing?'Enregistrer les modifications':'Créer la recette'}</button>
+  </form>`;
+}
+
 function wireModal(type){
   const M=document.getElementById('modal');
   M.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal);
@@ -1936,6 +2370,39 @@ function wireModal(type){
   });
   const retroC=M.querySelector('#retroConfirm');
   if(retroC) retroC.onclick=()=>{ if(validerRetroMois(retroC.dataset.mk)){ closeModal(); render(); } };
+  // Recette : toggles moment/végé + soumission + suppression
+  M.querySelectorAll('#segMeal button').forEach(b=>b.onclick=()=>{
+    modalDraft.meal=b.dataset.meal;
+    M.querySelectorAll('#segMeal button').forEach(x=>x.classList.toggle('on',x===b));
+  });
+  M.querySelectorAll('#segVeg button').forEach(b=>b.onclick=()=>{
+    modalDraft.veggie=b.dataset.veg==='1';
+    M.querySelectorAll('#segVeg button').forEach(x=>x.classList.toggle('on',x===b));
+  });
+  const fr=M.querySelector('#frmRecette');
+  if(fr) fr.onsubmit=e=>{
+    e.preventDefault();
+    const name=M.querySelector('#r_name').value.trim(); if(!name) return;
+    const emoji=M.querySelector('#r_emoji').value.trim()||'🍽️';
+    const time=Math.max(0,parseInt(M.querySelector('#r_time').value)||0);
+    const twoDays=M.querySelector('#r_2j').value==='1';
+    const veggie=!!modalDraft.veggie;
+    const meal=modalDraft.meal==='midi'?'midi':'soir';
+    const ingredients=M.querySelector('#r_ings').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    if(modalDraft.editId){
+      const r=recipeById(modalDraft.editId);
+      if(r) Object.assign(r,{name,emoji,time,twoDays,veggie,meal,ingredients});
+    }else{
+      S.meals.recipes.push({id:'r_'+uid(),name,emoji,time,twoDays,veggie,meal,ingredients});
+    }
+    save(); closeModal(); render();
+  };
+  const rdel=M.querySelector('#recDelBtn');
+  if(rdel) rdel.onclick=()=>{ if(confirm('Supprimer cette recette ?')){
+    S.meals.recipes=S.meals.recipes.filter(r=>r.id!==modalDraft.editId);
+    S.meals.menus.soir=(S.meals.menus.soir||[]).filter(id=>id!==modalDraft.editId);
+    S.meals.menus.midi=(S.meals.menus.midi||[]).filter(id=>id!==modalDraft.editId);
+    save(); closeModal(); render(); } };
   const _frm=M.querySelector('#frm'); if(_frm) _frm.onsubmit=e=>{
     e.preventDefault();
     const amount=parseFloat(M.querySelector('#f_amount').value);
@@ -2078,6 +2545,34 @@ function wireView(){
     try{ exportData(); }catch(e){}
     if(confirm('Sauvegarde téléchargée. Confirmer définitivement la remise à zéro ?')){ S=DEFAULT_STATE(); save(); render(); }
   };
+  // ---- Repas & courses ----
+  document.querySelectorAll('[data-mealsub]').forEach(b=>b.onclick=()=>{ MEAL_SUB=b.dataset.mealsub; render(); });
+  document.querySelectorAll('[data-mealslot]').forEach(b=>b.onclick=()=>{ MEAL_SLOT=b.dataset.mealslot; render(); });
+  document.querySelectorAll('[data-meallib]').forEach(b=>b.onclick=()=>{ MEAL_LIB=b.dataset.meallib; render(); });
+  const gm=document.getElementById('genMenuBtn'); if(gm) gm.onclick=()=>{
+    const def=MEAL_SLOT==='midi'?5:7;
+    const t=Math.max(1,parseInt(document.getElementById('targetEv')?.value)||def);
+    S.meals.targets[MEAL_SLOT]=t; S.meals.menus[MEAL_SLOT]=generateMenu(MEAL_SLOT,t); S.meals.checked={}; save(); render();
+  };
+  const tev=document.getElementById('targetEv'); if(tev) tev.onchange=()=>{ S.meals.targets[MEAL_SLOT]=Math.max(1,parseInt(tev.value)|| (MEAL_SLOT==='midi'?5:7)); save(); };
+  document.querySelectorAll('[data-mealswap]').forEach(b=>b.onclick=()=>swapMeal(MEAL_SLOT,+b.dataset.mealswap));
+  document.querySelectorAll('[data-mealdel]').forEach(b=>b.onclick=()=>{ S.meals.menus[MEAL_SLOT].splice(+b.dataset.mealdel,1); save(); render(); });
+  document.querySelectorAll('[data-mealadd]').forEach(b=>b.onclick=()=>{ const r=recipeById(b.dataset.mealadd); if(!r) return; const sl=r.meal||'soir'; S.meals.menus[sl]=S.meals.menus[sl]||[]; S.meals.menus[sl].push(r.id); save(); render(); });
+  document.querySelectorAll('[data-recedit]').forEach(b=>b.onclick=()=>{ const r=recipeById(b.dataset.recedit); if(r) openModal('recette',Object.assign({editId:r.id},JSON.parse(JSON.stringify(r)))); });
+  const clrMenu=document.getElementById('clearMenu'); if(clrMenu) clrMenu.onclick=()=>{ if(confirm('Vider ce menu ?')){ S.meals.menus[MEAL_SLOT]=[]; save(); render(); } };
+  const clrShop=document.getElementById('clearShop'); if(clrShop) clrShop.onclick=()=>{ S.meals.checked={}; save(); render(); };
+  document.querySelectorAll('[data-shop]').forEach(c=>c.onchange=()=>{
+    const k=c.dataset.shop;
+    if(c.checked) S.meals.checked[k]=true; else delete S.meals.checked[k];
+    const item=c.closest('.shop-item'); if(item) item.classList.toggle('done',c.checked);
+    updateShopProgress(); save();
+  });
+}
+function updateShopProgress(){
+  const el=document.getElementById('shopProg'); if(!el) return;
+  const boxes=document.querySelectorAll('[data-shop]');
+  const done=[...boxes].filter(b=>b.checked).length;
+  el.textContent=done+' / '+boxes.length+' coché'+(boxes.length>1?'s':'');
 }
 
 function copyRecurring(){
