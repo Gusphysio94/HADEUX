@@ -562,12 +562,12 @@ const RAYONS = [
 // Règles de classement (ordre important : les variantes « épicerie » de la tomate
 // passent avant le rayon légumes, etc.). Première correspondance gagne.
 const RAYON_RULES = [
-  ['epicerie',['pelé','pelee','concentr','coulis','séch','sech','riz','risotto','spaghett','spaguett','pâte','pate','gnocchi','nouille','semoule','farine','bouillon','pain','baguette','wrap','tortilla','pita','cornichon','compote','ananas','huile','sucre','miel','conserve','pizza','céréale','cereale','biscuit','chapelure','crouton','croûton','moutarde','ketchup','mayonnaise','pesto','olive','vinaigre','sésame','sesame','sauce soja','soja','falafel','houmous','pois chiche','pois-chiche','lentille','quinoa','boulgour','polenta','couscous','haricot rouge','flageolet','coco','noix','noisette','amande','pignon']],
+  ['epicerie',['pelé','pelee','concentr','coulis','séch','sech','riz','risotto','spaghett','spaguett','pâte','pate','gnocchi','nouille','semoule','farine','bouillon','pain','baguette','wrap','tortilla','pita','cornichon','compote','ananas','huile','sucre','miel','conserve','pizza','céréale','cereale','biscuit','chapelure','crouton','croûton','moutarde','ketchup','mayonnaise','pesto','olive','vinaigre','sésame','sesame','sauce soja','soja','teriyaki','falafel','houmous','pois chiche','pois-chiche','lentille','quinoa','boulgour','orge','polenta','couscous','haricot rouge','flageolet','coco','noix','noisette','amande','pignon']],
   ['viande',  ['haché','hache','boeuf','bœuf','poulet','lardon','jambon','porc','steak','dinde','saucisse','boulette','viande','bacon','merguez','agneau','veau']],
   ['poisson', ['saumon','cabillaud','thon','poisson','crevette','gambas','colin','truite','moule','scampi','sardine','maquereau','lieu','merlu','dorade','hareng']],
   ['frais',   ['fromage','râpé','rape','mozza','parmesan','feta','chèvre','chevre','haloumi','halloumi','tofu','crème','creme','lait','beurre','yaourt','skyr','cheddar','oeuf','œuf','ricotta','burrata','emmental','gruyère','gruyere']],
-  ['herbes',  ['thym','laurier','basilic','persil','ciboulette','origan','menthe','poivre','curry','curcuma','paprika','cumin','gingembre','coriandre','aneth','muscade','romarin','herbe','épice','epice']],
-  ['legumes', ['patate','pomme de terre','carotte','courgette','oignon','échalote','echalote','champignon','céleri','celeri','chou','navet','poivr','brocoli','tomate','ail','salade','roquette','mâche','mache','concombre','épinard','epinard','poireau','haricot','courge','butternut','potimarron','aubergine','fenouil','radis','betterave','edamame','potiron','citrouille','fraise','pomme','banane','citron','avocat','mais','maïs','petit pois']],
+  ['herbes',  ['thym','laurier','basilic','persil','ciboulette','origan','menthe','poivre','piment','espelette','curry','curcuma','paprika','cumin','gingembre','coriandre','aneth','muscade','romarin','herbe','épice','epice']],
+  ['legumes', ['patate','pomme de terre','carotte','courgette','oignon','échalote','echalote','champignon','céleri','celeri','chou','navet','poivr','brocoli','tomate','ail','salade','roquette','mâche','mache','concombre','épinard','epinard','poireau','haricot','courge','butternut','potimarron','aubergine','fenouil','radis','betterave','edamame','édamame','potiron','citrouille','fraise','pomme','banane','citron','avocat','mais','maïs','petit pois']],
 ];
 function guessRayon(name){
   const l=String(name||'').toLowerCase();
@@ -580,7 +580,7 @@ function detectProtein(ings){
   if(/lardon|jambon|\bporc\b|bacon|saucisse|merguez/.test(s)) return 'porc';
   if(/poulet|dinde|volaille/.test(s)) return 'poulet';
   if(/haché|hache|boeuf|bœuf|steak|veau|agneau|boulette/.test(s)) return 'boeuf';
-  if(/saumon|poisson|thon|cabillaud|crevette|colin|truite|scampi/.test(s)) return 'poisson';
+  if(/saumon|poisson|thon|cabillaud|crevette|gambas|colin|truite|scampi|maquereau|sardine/.test(s)) return 'poisson';
   return 'vege';
 }
 function DEFAULT_RECIPES(){ return [
@@ -701,7 +701,102 @@ function DEFAULT_RECIPES(){ return [
     ingredients:['Courge butternut','Oignon','Lait de coco','Bouillon de légumes','Muscade']},
   {id:'ri_salade_pates_pesto', emoji:'🥗', name:'Salade de pâtes complètes au pesto', meal:'midi', veggie:true, twoDays:false, time:15, inspiration:true,
     ingredients:['Pâtes complètes','Tomates cerises','Mozzarella','Roquette','Pesto','Pignons']},
+
+  /* ==== Lot 2 · idées healthy avec étapes — dîners ==== */
+  {id:'ri2_poulet_citron', emoji:'🍗', name:'Poulet rôti au citron & courgettes', meal:'soir', veggie:false, twoDays:true, time:35, inspiration:true,
+    ingredients:['Filets de poulet','Courgette','Citron','Ail','Huile d\'olive','Herbes de Provence'],
+    steps:'Préchauffer le four à 200°C.\nDétailler les courgettes, mêler à l\'huile, l\'ail et les herbes.\nDéposer les filets de poulet, arroser de jus de citron.\nEnfourner 25-30 min jusqu\'à cuisson complète du poulet.'},
+  {id:'ri2_saumon_teriyaki', emoji:'🐟', name:'Saumon teriyaki, riz & brocolis', meal:'soir', veggie:false, twoDays:false, time:25, inspiration:true,
+    ingredients:['Filet de saumon','Riz complet','Brocolis','Sauce teriyaki','Sésame','Gingembre'],
+    steps:'Cuire le riz complet.\nBadigeonner le saumon de sauce teriyaki, cuire 10-12 min (poêle ou four).\nCuire les brocolis à la vapeur.\nParsemer de sésame et servir.'},
+  {id:'ri2_cabillaud_provencale', emoji:'🐟', name:'Cabillaud à la provençale', meal:'soir', veggie:false, twoDays:true, time:30, inspiration:true,
+    ingredients:['Dos de cabillaud','Tomates pelées','Courgette','Poivron','Olives','Ail','Huile d\'olive'],
+    steps:'Faire revenir ail, poivron et courgette à l\'huile.\nAjouter les tomates pelées et les olives, mijoter 10 min.\nDéposer le cabillaud dans la sauce, couvrir.\nCuire 12-15 min à feu doux.'},
+  {id:'ri2_dinde_curry', emoji:'🍛', name:'Émincé de dinde au curry & légumes', meal:'soir', veggie:false, twoDays:true, time:30, inspiration:true,
+    ingredients:['Émincé de dinde','Lait de coco','Carotte','Poivron','Oignon','Curry','Riz'],
+    steps:'Saisir l\'émincé de dinde, réserver.\nFaire revenir oignon, carotte et poivron.\nAjouter curry et lait de coco, remettre la dinde.\nMijoter 15 min, servir avec le riz.'},
+  {id:'ri2_chili_carne', emoji:'🌶️', name:'Chili con carne allégé', meal:'soir', veggie:false, twoDays:true, time:40, inspiration:true,
+    ingredients:['Bœuf haché maigre','Haricots rouges','Tomates pelées','Maïs','Poivron','Oignon','Cumin','Riz'],
+    steps:'Faire revenir oignon et poivron.\nAjouter le bœuf haché, cuire jusqu\'à coloration.\nIncorporer tomates, haricots rouges, maïs et cumin.\nMijoter 20 min, servir avec le riz.'},
+  {id:'ri2_boeuf_saute', emoji:'🥢', name:'Sauté de bœuf aux poivrons & nouilles', meal:'soir', veggie:false, twoDays:false, time:25, inspiration:true,
+    ingredients:['Bœuf à sauter','Poivrons','Oignon','Nouilles','Sauce soja','Gingembre','Ail'],
+    steps:'Cuire les nouilles.\nSaisir le bœuf à feu vif, réserver.\nFaire sauter poivrons, oignon, ail et gingembre.\nRemettre le bœuf, déglacer à la sauce soja, mélanger aux nouilles.'},
+  {id:'ri2_truite_papillote', emoji:'🐟', name:'Papillote de truite, poireaux & pommes de terre', meal:'soir', veggie:false, twoDays:false, time:35, inspiration:true,
+    ingredients:['Filet de truite','Poireau','Pommes de terre','Citron','Aneth','Huile d\'olive'],
+    steps:'Précuire les pommes de terre en rondelles 8 min.\nÉmincer le poireau.\nSur du papier cuisson : pommes de terre, poireau, truite, citron et aneth.\nFermer la papillote et cuire 20 min à 200°C.'},
+  {id:'ri2_poulet_basquaise', emoji:'🍗', name:'Poulet basquaise', meal:'soir', veggie:false, twoDays:true, time:40, inspiration:true,
+    ingredients:['Cuisses de poulet','Poivrons','Tomates pelées','Oignon','Ail','Piment d\'Espelette','Riz'],
+    steps:'Dorer les cuisses de poulet, réserver.\nFaire revenir oignon, ail et poivrons.\nAjouter tomates et piment d\'Espelette.\nRemettre le poulet, mijoter 30 min, servir avec le riz.'},
+  {id:'ri2_dahl_vert', emoji:'🍲', name:'Dahl de lentilles vertes', meal:'soir', veggie:true, twoDays:true, time:35, inspiration:true,
+    ingredients:['Lentilles vertes','Lait de coco','Tomates pelées','Oignon','Ail','Gingembre','Curcuma','Riz'],
+    steps:'Rincer les lentilles.\nFaire revenir oignon, ail, gingembre et curcuma.\nAjouter lentilles, tomates et lait de coco, couvrir d\'eau.\nMijoter 25-30 min, servir avec le riz.'},
+  {id:'ri2_bowl_tofu', emoji:'🥡', name:'Buddha bowl tofu croustillant', meal:'soir', veggie:true, twoDays:false, time:25, inspiration:true,
+    ingredients:['Tofu ferme','Riz','Chou rouge','Carotte','Avocat','Sauce soja','Sésame','Citron'],
+    steps:'Cuire le riz.\nDorer les dés de tofu à la poêle avec un peu de sauce soja.\nRâper carotte et chou, trancher l\'avocat.\nDresser en bowl, parsemer de sésame et citronner.'},
+  {id:'ri2_gratin_courgette', emoji:'🧀', name:'Gratin de courgettes au quinoa', meal:'soir', veggie:true, twoDays:true, time:40, inspiration:true,
+    ingredients:['Courgette','Quinoa','Œufs','Crème liquide','Fromage râpé','Oignon'],
+    steps:'Cuire le quinoa.\nFaire suer courgettes et oignon.\nMélanger avec quinoa, œufs battus et crème.\nVerser dans un plat, couvrir de fromage, gratiner 25 min à 200°C.'},
+  {id:'ri2_ratatouille_oeuf', emoji:'🍆', name:'Ratatouille & œuf poché', meal:'soir', veggie:true, twoDays:true, time:40, inspiration:true,
+    ingredients:['Aubergine','Courgette','Poivron','Tomates pelées','Oignon','Ail','Œufs','Herbes de Provence'],
+    steps:'Faire revenir séparément aubergine, courgette et poivron.\nRéunir avec oignon, ail, tomates et herbes.\nMijoter 25 min à couvert.\nPocher les œufs et déposer sur la ratatouille.'},
+  {id:'ri2_poelee_patatedouce', emoji:'🍠', name:'Poêlée patate douce, pois chiches & épinards', meal:'soir', veggie:true, twoDays:false, time:25, inspiration:true,
+    ingredients:['Patate douce','Pois chiches','Épinards','Oignon','Ail','Cumin','Citron'],
+    steps:'Rôtir les dés de patate douce 15 min au four.\nFaire revenir oignon, ail et cumin.\nAjouter pois chiches et patate douce.\nIncorporer les épinards, un filet de citron, servir.'},
+  {id:'ri2_soupe_thai', emoji:'🍜', name:'Soupe thaï coco-légumes & nouilles', meal:'soir', veggie:true, twoDays:false, time:25, inspiration:true,
+    ingredients:['Lait de coco','Nouilles de riz','Carotte','Champignons','Brocolis','Gingembre','Citron vert','Coriandre'],
+    steps:'Chauffer le lait de coco avec le gingembre et un peu d\'eau.\nAjouter carotte, champignons et brocolis, cuire 8 min.\nAjouter les nouilles de riz, cuire 3 min.\nCitronner (citron vert) et parsemer de coriandre.'},
+  {id:'ri2_frittata', emoji:'🍳', name:'Frittata aux légumes', meal:'soir', veggie:true, twoDays:false, time:25, inspiration:true,
+    ingredients:['Œufs','Courgette','Poivron','Oignon','Tomates cerises','Fromage râpé','Basilic'],
+    steps:'Faire revenir courgette, poivron et oignon.\nBattre les œufs, saler et poivrer.\nVerser sur les légumes, parsemer de fromage.\nCuire à couvert 10 min puis finir 3 min au four.'},
+  {id:'ri2_orzotto', emoji:'🍚', name:'Orzotto crémeux aux champignons', meal:'soir', veggie:true, twoDays:true, time:35, inspiration:true,
+    ingredients:['Orge perlé','Champignons','Oignon','Bouillon de légumes','Parmesan','Ail','Persil'],
+    steps:'Faire revenir oignon et ail.\nAjouter l\'orge, nacrer 2 min.\nMouiller au bouillon louche par louche, environ 25 min.\nIncorporer champignons poêlés et parmesan, servir.'},
+
+  /* ==== Lot 2 · idées healthy avec étapes — déjeuners ==== */
+  {id:'ri2_salade_poulet_avocat', emoji:'🥗', name:'Salade poulet, avocat & maïs', meal:'midi', veggie:false, twoDays:false, time:15, inspiration:true,
+    ingredients:['Poulet','Avocat','Maïs','Salade','Tomates cerises','Citron','Huile d\'olive'],
+    steps:'Émincer le poulet cuit.\nMélanger salade, maïs, tomates et avocat.\nAjouter le poulet.\nAssaisonner citron et huile d\'olive.'},
+  {id:'ri2_wrap_saumon', emoji:'🌯', name:'Wrap saumon fumé & concombre', meal:'midi', veggie:false, twoDays:false, time:10, inspiration:true,
+    ingredients:['Tortilla','Saumon fumé','Concombre','Fromage frais','Aneth','Citron'],
+    steps:'Tartiner la tortilla de fromage frais.\nAjouter saumon fumé, concombre en lamelles et aneth.\nUn filet de citron.\nRouler et couper en deux.'},
+  {id:'ri2_salade_thon_blancs', emoji:'🥗', name:'Salade thon & haricots blancs', meal:'midi', veggie:false, twoDays:false, time:10, inspiration:true,
+    ingredients:['Thon','Haricots blancs','Tomate','Oignon rouge','Persil','Citron','Huile d\'olive'],
+    steps:'Égoutter thon et haricots blancs.\nAjouter tomate et oignon rouge émincés.\nAssaisonner citron, huile d\'olive et persil.\nMélanger et servir frais.'},
+  {id:'ri2_omelette_jambon', emoji:'🍳', name:'Omelette jambon-fromage & salade', meal:'midi', veggie:false, twoDays:false, time:10, inspiration:true,
+    ingredients:['Œufs','Jambon','Fromage râpé','Salade','Tomate'],
+    steps:'Battre les œufs.\nVerser en poêle, ajouter jambon et fromage.\nPlier l\'omelette.\nServir avec salade et tomate.'},
+  {id:'ri2_gambas_courgette', emoji:'🦐', name:'Poêlée express gambas-courgettes', meal:'midi', veggie:false, twoDays:false, time:15, inspiration:true,
+    ingredients:['Gambas','Courgette','Ail','Citron','Persil','Huile d\'olive'],
+    steps:'Faire sauter les courgettes en dés.\nAjouter les gambas et l\'ail.\nCuire 4-5 min.\nCitronner et parsemer de persil.'},
+  {id:'ri2_bowl_poulet_teriyaki', emoji:'🥡', name:'Bowl poulet teriyaki express', meal:'midi', veggie:false, twoDays:false, time:15, inspiration:true,
+    ingredients:['Poulet','Riz','Édamame','Carotte','Sauce teriyaki','Sésame'],
+    steps:'Cuire ou réchauffer le riz.\nPoêler le poulet avec la sauce teriyaki.\nRâper la carotte, cuire les édamames.\nDresser en bowl, parsemer de sésame.'},
+  {id:'ri2_sandwich_poulet', emoji:'🥪', name:'Sandwich complet poulet-crudités', meal:'midi', veggie:false, twoDays:false, time:10, inspiration:true,
+    ingredients:['Pain complet','Poulet','Salade','Tomate','Concombre','Yaourt grec'],
+    steps:'Mélanger le yaourt grec avec un peu de citron pour la sauce.\nGarnir le pain de poulet, salade, tomate et concombre.\nNapper de sauce.\nRefermer et servir.'},
+  {id:'ri2_salade_betterave', emoji:'🥗', name:'Salade betterave, feta & noix', meal:'midi', veggie:true, twoDays:false, time:10, inspiration:true,
+    ingredients:['Betterave','Feta','Noix','Roquette','Vinaigre balsamique','Huile d\'olive'],
+    steps:'Détailler la betterave cuite en dés.\nDisposer sur la roquette.\nÉmietter la feta, ajouter les noix.\nAssaisonner huile d\'olive et balsamique.'},
+  {id:'ri2_taboule_quinoa', emoji:'🥗', name:'Taboulé de quinoa', meal:'midi', veggie:true, twoDays:true, time:15, inspiration:true,
+    ingredients:['Quinoa','Concombre','Tomate','Menthe','Persil','Citron','Huile d\'olive'],
+    steps:'Cuire le quinoa et laisser refroidir.\nDétailler concombre et tomate en petits dés.\nCiseler menthe et persil.\nMélanger, assaisonner citron et huile d\'olive.'},
+  {id:'ri2_caprese', emoji:'🍅', name:'Salade caprese', meal:'midi', veggie:true, twoDays:false, time:10, inspiration:true,
+    ingredients:['Mozzarella','Tomate','Basilic','Huile d\'olive','Vinaigre balsamique'],
+    steps:'Trancher tomate et mozzarella.\nAlterner sur l\'assiette.\nParsemer de basilic.\nArroser d\'huile d\'olive et de balsamique.'},
+  {id:'ri2_tartine_ricotta', emoji:'🥪', name:'Tartine ricotta & courgette grillée', meal:'midi', veggie:true, twoDays:false, time:15, inspiration:true,
+    ingredients:['Pain complet','Ricotta','Courgette','Citron','Menthe','Huile d\'olive'],
+    steps:'Griller de fines lamelles de courgette.\nTartiner le pain de ricotta.\nDéposer les courgettes.\nZeste de citron, menthe et filet d\'huile.'},
+  {id:'ri2_bowl_patatedouce', emoji:'🥗', name:'Buddha bowl patate douce & edamame', meal:'midi', veggie:true, twoDays:false, time:20, inspiration:true,
+    ingredients:['Patate douce','Édamame','Quinoa','Avocat','Carotte','Sésame','Citron'],
+    steps:'Rôtir la patate douce en dés.\nCuire le quinoa et les édamames.\nRâper la carotte, trancher l\'avocat.\nDresser en bowl, sésame et citron.'},
+  {id:'ri2_gaspacho', emoji:'🍅', name:'Gaspacho & œuf dur', meal:'midi', veggie:true, twoDays:true, time:15, inspiration:true,
+    ingredients:['Tomate','Concombre','Poivron','Ail','Huile d\'olive','Vinaigre','Œufs'],
+    steps:'Mixer tomate, concombre, poivron et ail.\nAjouter huile d\'olive et vinaigre, saler.\nRéserver au frais.\nServir bien frais avec un œuf dur.'},
+  {id:'ri2_wrap_houmous', emoji:'🌯', name:'Wrap houmous-crudités', meal:'midi', veggie:true, twoDays:false, time:10, inspiration:true,
+    ingredients:['Tortilla','Houmous','Carotte','Concombre','Poivron','Salade'],
+    steps:'Tartiner la tortilla de houmous.\nRâper la carotte, émincer concombre et poivron.\nAjouter la salade.\nRouler serré et couper.'},
 ]; }
+const RECIPE_SEED_VERSION = 2;   // bump quand on ajoute un lot de recettes par défaut
 
 /* Paramètres fiscaux belges — sources officielles vérifiées (SPF Finances, INASTI,
    secrétariats sociaux) en juillet 2026. Deux exercices disponibles. */
@@ -750,7 +845,7 @@ const DEFAULT_STATE = () => ({
     m2:{salaireBrut:0, recettes:0, fraisPro:0, statut:'complementaire', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false}
   },
   meals:{recipes:DEFAULT_RECIPES(), menus:{soir:[],midi:[]}, targets:{soir:7,midi:5}, checked:{},
-    pinned:[], extras:[], pantry:[], recent:[], filters:{maxTime:0,veggieOnly:false,exclude:''}, startDay:1},
+    pinned:[], extras:[], pantry:[], recent:[], filters:{maxTime:0,veggieOnly:false,exclude:''}, startDay:1, seededVersion:RECIPE_SEED_VERSION},
   ui:{month:monthKey(todayISO())}, version:3
 });
 
@@ -798,6 +893,12 @@ function migrate(s){
   if(!s.meals||typeof s.meals!=='object') s.meals={};
   if(!Array.isArray(s.meals.recipes)) s.meals.recipes=DEFAULT_RECIPES();
   else s.meals.recipes.forEach(r=>{ if(r.meal!=='midi') r.meal='soir'; if(typeof r.veggie!=='boolean') r.veggie=false; if(!Array.isArray(r.ingredients)) r.ingredients=[]; });
+  // Top-up additif des recettes par défaut (nouveaux lots), une seule fois par version
+  if((s.meals.seededVersion||0) < RECIPE_SEED_VERSION){
+    const have=new Set(s.meals.recipes.map(r=>r.id));
+    DEFAULT_RECIPES().forEach(r=>{ if(!have.has(r.id)) s.meals.recipes.push(r); });
+    s.meals.seededVersion=RECIPE_SEED_VERSION;
+  }
   // Deux créneaux (soir/midi) — migre l'ancien format à menu unique
   if(!s.meals.menus||typeof s.meals.menus!=='object') s.meals.menus={soir:Array.isArray(s.meals.menu)?s.meals.menu:[], midi:[]};
   if(!Array.isArray(s.meals.menus.soir)) s.meals.menus.soir=[];
