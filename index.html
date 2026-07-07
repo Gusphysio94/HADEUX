@@ -78,6 +78,38 @@
   .toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;
     margin:22px 0;flex-wrap:wrap}
 
+  /* Header tools + roue crantée */
+  .headtools{display:flex;align-items:center;gap:10px}
+  .gearbtn{width:40px;height:40px;flex:none;border-radius:100px;display:grid;place-items:center;
+    background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);font-size:18px;color:var(--muted);transition:.15s}
+  .gearbtn:hover{color:var(--ink);background:var(--surface2)}
+  .gearbtn.active{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+
+  /* Barre de pôles (haut, desktop) */
+  .poles{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);
+    border-radius:18px;padding:6px;box-shadow:var(--shadow)}
+  .poles button{flex:1;padding:10px 12px;border-radius:100px;font-size:13.5px;font-weight:600;color:var(--muted);
+    white-space:nowrap;transition:.18s;display:flex;align-items:center;justify-content:center;gap:7px}
+  .poles button .ic{font-size:15px}
+  .poles button:hover{color:var(--ink)}
+  .poles button.active{background:var(--ink);color:var(--surface);box-shadow:0 3px 10px rgba(36,34,25,.25)}
+
+  /* Barre du bas (mobile) */
+  .bottombar{display:none}
+  @media(max-width:640px){
+    .poles{display:none}
+    .bottombar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;justify-content:space-around;
+      background:rgba(255,253,248,.97);backdrop-filter:blur(10px);border-top:1px solid var(--line);
+      padding:7px 4px calc(7px + env(safe-area-inset-bottom))}
+    .bottombar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:3px 2px;
+      color:var(--faint);font-size:9.5px;font-weight:700;border-radius:10px;transition:.12s;min-width:0}
+    .bottombar button .ic{font-size:20px;line-height:1;filter:grayscale(.4) opacity(.7)}
+    .bottombar button.active{color:var(--green)}
+    .bottombar button.active .ic{filter:none}
+    .app{padding-bottom:calc(84px + env(safe-area-inset-bottom))}
+    .fab{bottom:calc(84px + env(safe-area-inset-bottom))}
+  }
+
   /* Cards */
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
     box-shadow:var(--shadow)}
@@ -428,31 +460,23 @@
         <p>Le budget du foyer, au clair <span id="syncDot" class="syncdot local" title="Local"></span></p>
       </div>
     </div>
-    <div class="monthbar">
-      <button class="arrow" id="prevM">‹</button>
-      <div class="label" id="monthLabel">—</div>
-      <button class="arrow" id="nextM">›</button>
-      <span class="today" id="todayBtn">Aujourd'hui</span>
+    <div class="headtools">
+      <div class="monthbar" id="monthbar">
+        <button class="arrow" id="prevM">‹</button>
+        <div class="label" id="monthLabel">—</div>
+        <button class="arrow" id="nextM">›</button>
+        <span class="today" id="todayBtn">Aujourd'hui</span>
+      </div>
+      <button class="gearbtn" id="gearBtn" title="Réglages" aria-label="Réglages">⚙</button>
     </div>
   </header>
 
-  <nav class="tabs" id="tabs">
-    <button data-tab="dash" class="active"><span class="ic">◔</span> Tableau de bord</button>
-    <button data-tab="foyer"><span class="ic">🏡</span> Foyer</button>
-    <button data-tab="depenses"><span class="ic">↑</span> Dépenses</button>
-    <button data-tab="rev1"><span class="ic">💶</span> <span id="tabName1">Revenus</span></button>
-    <button data-tab="rev2"><span class="ic">💶</span> <span id="tabName2">Revenus</span></button>
-    <button data-tab="retro"><span class="ic">🏥</span> Rétro</button>
-    <button data-tab="prevu"><span class="ic">🗓</span> Prévu</button>
-    <button data-tab="bilan"><span class="ic">📈</span> Bilan</button>
-    <button data-tab="commun"><span class="ic">◈</span> Commun</button>
-    <button data-tab="repas"><span class="ic">🍽️</span> Repas</button>
-    <button data-tab="reglages"><span class="ic">⚙</span> Réglages</button>
-  </nav>
+  <nav class="poles" id="poleBar"></nav>
 
   <main id="main"></main>
 </div>
 
+<nav class="bottombar" id="bottomBar"></nav>
 <button class="fab" id="fab" title="Ajouter une dépense">+</button>
 
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
@@ -741,6 +765,7 @@ let MEAL_OPEN = {};       // recetteId -> déplié (ingrédients/préparation) �
 let MEAL_SHOW_PANTRY = false; // afficher le garde-manger — session
 let MEAL_DAYVIEW = false;  // vue par jour dans « Ma semaine » — session
 let MEAL_SHOW_FILTERS = false; // afficher les filtres de génération — session
+let POLE_SUB = {};        // dernier sous-onglet visité par pôle (session)
 
 // Normalise/complète un état (utilisé au chargement local ET pour les données reçues du cloud)
 function migrate(s){
@@ -938,18 +963,53 @@ const sum = a => a.reduce((s,x)=>s+(+x||0),0);
 /* ============================================================
    RENDER
 ============================================================ */
+/* ---------- Navigation par pôles ---------- */
+const POLE_OF = {dash:'accueil', depenses:'depenses', commun:'depenses', import:'depenses',
+  foyer:'revenus', rev1:'revenus', rev2:'revenus', retro:'retro', prevu:'analyse', bilan:'analyse',
+  repas:'repas', reglages:'reglages'};
+const HIDE_MONTH = ['foyer','retro','prevu','repas','reglages','import'];
+function poleList(){ return [
+  {id:'accueil',  ic:'🏠', label:'Accueil',  subs:[['dash','Aperçu']]},
+  {id:'depenses', ic:'💳', label:'Dépenses', subs:[['depenses','Dépenses'],['commun','Compte commun']]},
+  {id:'revenus',  ic:'💶', label:'Revenus',  subs:[['foyer','Foyer'],['rev1',S.members[0].name],['rev2',S.members[1].name]]},
+  {id:'retro',    ic:'🏥', label:'Rétro',    subs:[['retro','Rétro']]},
+  {id:'analyse',  ic:'📈', label:'Analyse',  subs:[['prevu','Prévisionnel'],['bilan','Bilan']]},
+  {id:'repas',    ic:'🍽️', label:'Repas',    subs:[['repas','Repas']]},
+]; }
+function poleById(id){ return poleList().find(p=>p.id===id); }
+function goPole(id){ const p=poleById(id); if(!p) return; const s=POLE_SUB[id];
+  VIEW = p.subs.some(x=>x[0]===s) ? s : p.subs[0][0]; render(); }
+function goView(v){ VIEW=v; const pole=POLE_OF[v]; if(pole) POLE_SUB[pole]=v; render(); }
+
 function render(){
   document.getElementById('monthLabel').textContent =
     new Date(curMonth()+'-01T12:00').toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
-  document.getElementById('tabName1').textContent = S.members[0].name;
-  document.getElementById('tabName2').textContent = S.members[1].name;
-  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===VIEW));
+  const activePole = POLE_OF[VIEW]||'';
+  const mb=document.getElementById('monthbar'); if(mb) mb.style.display = HIDE_MONTH.includes(VIEW)?'none':'';
+  const gb=document.getElementById('gearBtn'); if(gb) gb.classList.toggle('active', VIEW==='reglages');
+  const fab=document.getElementById('fab'); if(fab) fab.style.display = ['repas','reglages','import'].includes(VIEW)?'none':'';
+  // Barres de pôles (haut + bas)
+  const topHtml=poleList().map(p=>`<button data-pole="${p.id}" class="${activePole===p.id?'active':''}"><span class="ic">${p.ic}</span> ${esc(p.label)}</button>`).join('');
+  const botHtml=poleList().map(p=>`<button data-pole="${p.id}" class="${activePole===p.id?'active':''}"><span class="ic">${p.ic}</span>${esc(p.label)}</button>`).join('');
+  document.getElementById('poleBar').innerHTML=topHtml;
+  document.getElementById('bottomBar').innerHTML=botHtml;
+  // Sous-onglets du pôle (si >1 et hors vues spéciales)
+  let subnavHtml='';
+  const pole=poleById(activePole);
+  if(pole && pole.subs.length>1 && VIEW!=='import'){
+    subnavHtml=`<div class="subnav" style="margin-bottom:14px">`+pole.subs.map(([v,l])=>`<button data-goview="${v}" class="${VIEW===v?'on':''}">${esc(l)}</button>`).join('')+`</div>`;
+  }
   const main=document.getElementById('main');
   const routes={dash:renderDash,foyer:renderFoyer,depenses:renderDepenses,
     rev1:()=>renderRevenus(0), rev2:()=>renderRevenus(1),
     retro:renderRetro, prevu:renderPrevu, bilan:renderBilan, commun:renderCommun,repas:renderRepas,reglages:renderReglages, import:renderImport};
-  main.innerHTML = (routes[VIEW]||renderDash)();
+  main.innerHTML = subnavHtml + (routes[VIEW]||renderDash)();
   wireView();
+  wireNav();
+}
+function wireNav(){
+  document.querySelectorAll('#poleBar [data-pole],#bottomBar [data-pole]').forEach(b=>b.onclick=()=>goPole(b.dataset.pole));
+  document.querySelectorAll('#main [data-goview]').forEach(b=>b.onclick=()=>goView(b.dataset.goview));
 }
 
 /* ---------- DASHBOARD ---------- */
@@ -3005,7 +3065,7 @@ function wireImport(){
 }
 
 /* ---------- Navigation ---------- */
-document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b){VIEW=b.dataset.tab;render();}});
+document.getElementById('gearBtn').onclick=()=>{ VIEW='reglages'; render(); };
 document.getElementById('prevM').onclick=()=>{S.ui.month=shiftMonth(curMonth(),-1);save();render();};
 document.getElementById('nextM').onclick=()=>{S.ui.month=shiftMonth(curMonth(),1);save();render();};
 document.getElementById('todayBtn').onclick=()=>{S.ui.month=monthKey(todayISO());save();render();};
