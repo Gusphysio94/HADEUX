@@ -851,6 +851,7 @@ const DEFAULT_STATE = () => ({
   budgets:{},
   retro:{ rate:0.30, days:{}, cursorWeek:mondayOf(todayISO()), history:[], memberId:'m1' },
   fiscalYear:'2026',
+  goal:{monthly:0},
   couple:{quotientConjugal:true},
   profils:{
     m1:{salaireBrut:0, recettes:0, fraisPro:0, statut:'principal', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false},
@@ -885,6 +886,8 @@ function migrate(s){
   if(!Array.isArray(s.categories)) s.categories=DEFAULT_CATS;
   ['expenses','incomes','contributions','recurrents'].forEach(k=>{ if(!Array.isArray(s[k])) s[k]=[]; });
   s.fiscalYear = s.fiscalYear || '2026';
+  if(!s.goal||typeof s.goal!=='object') s.goal={monthly:0};
+  if(typeof s.goal.monthly!=='number') s.goal.monthly=0;
   s.couple = Object.assign({quotientConjugal:true}, s.couple||{});
   if(!s.budgets||typeof s.budgets!=='object') s.budgets={};
   if(!s.retro) s.retro={rate:0.30,days:{},cursorWeek:mondayOf(todayISO()),history:[]};
@@ -1183,17 +1186,64 @@ function wireNav(){
   document.querySelectorAll('#main [data-goview]').forEach(b=>b.onclick=()=>goView(b.dataset.goview));
 }
 
+/* Totaux d'un mois donné (pour comparaisons) */
+function monthTotals(mk){
+  const exp=S.expenses.filter(e=>monthKey(e.date)===mk);
+  const inc=S.incomes.filter(i=>monthKey(i.date)===mk);
+  const byCat={}; exp.forEach(e=>byCat[e.categoryId]=(byCat[e.categoryId]||0)+e.amount);
+  const tExp=sum(exp.map(e=>e.amount)), tInc=sum(inc.map(i=>i.amount));
+  return {tExp,tInc,epargne:tInc-tExp,byCat};
+}
+function deltaChip(now,prev,invert){
+  if(prev<=0) return '';
+  const pct=Math.round((now-prev)/prev*100);
+  if(pct===0) return `<span style="color:var(--muted)">= vs mois dernier</span>`;
+  const up=pct>0; const good=invert?!up:up;   // pour dépenses, la hausse est "mauvaise"
+  const col=good?'var(--green)':'var(--terra)';
+  return `<span style="color:${col};font-weight:600">${up?'▲':'▼'} ${Math.abs(pct)}%</span> <span style="color:var(--muted)">vs mois dernier</span>`;
+}
+
+function monthMovers(d,prev){
+  if(prev.tExp<=0) return '';   // pas de mois précédent à comparer
+  const nowByCat={}; d.exp.forEach(e=>nowByCat[e.categoryId]=(nowByCat[e.categoryId]||0)+e.amount);
+  const ids=new Set([...Object.keys(nowByCat),...Object.keys(prev.byCat)]);
+  const rows=[...ids].map(id=>({id, now:nowByCat[id]||0, was:prev.byCat[id]||0, diff:(nowByCat[id]||0)-(prev.byCat[id]||0)}))
+    .filter(r=>Math.abs(r.diff)>=1).sort((a,b)=>Math.abs(b.diff)-Math.abs(a.diff)).slice(0,4);
+  if(!rows.length) return '';
+  return `<div class="card"><h2 class="title">Ce qui bouge vs mois dernier</h2>
+    <p class="sub-t">Plus grosses variations par catégorie</p>
+    <div class="list">${rows.map(r=>{ const c=cat(r.id); const up=r.diff>0;
+      return `<div class="row"><div class="em">${c.e}</div>
+        <div class="main"><div class="l1">${esc(c.name)}</div>
+          <div class="l2">${EUR0(r.was)} → ${EUR0(r.now)}</div></div>
+        <div class="amt" style="color:${up?'var(--terra)':'var(--green)'}">${up?'+':'−'}${EUR0(Math.abs(r.diff))}</div></div>`;
+    }).join('')}</div></div>`;
+}
+
 /* ---------- DASHBOARD ---------- */
 function renderDash(){
   const d=compute();
+  const prev=monthTotals(shiftMonth(curMonth(),-1));
+  const goal=(S.goal&&S.goal.monthly)||0;
+  const goalPct=goal>0?Math.max(0,Math.min(100,Math.round(d.epargne/goal*100))):0;
+  const goalCard = goal>0 ? `<div class="card">
+    <h2 class="title">Objectif d'épargne</h2>
+    <p class="sub-t">${d.epargne>=goal?`Objectif atteint ce mois 🎉`:`${EUR(Math.max(0,goal-d.epargne))} restants pour atteindre ${EUR0(goal)}/mois`}</p>
+    <div class="bars"><div class="bar-row"><div class="em">🎯</div><div class="info">
+      <div class="top"><span>${EUR(Math.max(0,d.epargne))} épargnés</span><span class="amt">${goalPct}% de ${EUR0(goal)}</span></div>
+      <div class="track"><div class="fill" style="width:${goalPct}%;background:${d.epargne>=goal?'var(--green)':'var(--gold)'}"></div></div>
+    </div></div></div>
+  </div>` : '';
   return `<section class="view grid">
     ${settlementHero(d)}
     <div class="stats">
-      ${stat('Dépenses du mois', EUR(d.totalExp), `dont ${EUR0(d.totalCommune)} communes`,'')}
-      ${stat('Revenus du mois', EUR(d.totalIncome), 'du foyer','')}
+      ${stat('Dépenses du mois', EUR(d.totalExp), deltaChip(d.totalExp,prev.tExp,true)||`dont ${EUR0(d.totalCommune)} communes`,'')}
+      ${stat('Revenus du mois', EUR(d.totalIncome), deltaChip(d.totalIncome,prev.tInc,false)||'du foyer','')}
       ${stat('Épargne', EUR(d.epargne), d.epargne>=0?'mise de côté':'découvert', d.epargne>=0?'pos':'neg')}
       ${stat('Compte commun', EUR(d.potBalance), 'solde estimé ce mois', d.potBalance>=0?'pos':'neg')}
     </div>
+    ${goalCard}
+    ${monthMovers(d,prev)}
 
     <div class="cols">
       <div class="card">
@@ -2523,6 +2573,13 @@ function renderReglages(){
     </div>
 
     <div class="card">
+      <h2 class="title" style="padding-bottom:6px">🎯 Objectif d'épargne</h2>
+      <div class="setrow"><div><div class="st">Épargne visée par mois</div><div class="sd">Suivi sur le tableau de bord (revenus − dépenses du mois). Laisse 0 pour désactiver.</div></div>
+        <div class="amount-input"><input type="number" step="50" min="0" value="${(S.goal&&S.goal.monthly)||''}" id="goalMonthly" placeholder="0" style="max-width:130px;padding:9px 26px 9px 12px;font-size:15px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)"><span class="cur" style="font-size:13px">€</span></div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2 class="title" style="padding-bottom:6px">Catégories de dépenses</h2>
       <p class="sub-t">Personnalise emoji, nom et couleur. La suppression bascule les dépenses concernées en « Divers ».</p>
       <div style="padding:12px 22px 6px;display:grid;gap:8px">
@@ -2973,6 +3030,7 @@ function wireView(){
     save(); render(); toast('Catégorie supprimée');
   });
   const ca=document.getElementById('catAdd'); if(ca) ca.onclick=()=>{ S.categories.push({id:'c_'+uid(), name:'Nouvelle catégorie', e:'🏷️', c:'#9A8C6E'}); save(); render(); };
+  const gmn=document.getElementById('goalMonthly'); if(gmn) gmn.onchange=()=>{ S.goal.monthly=Math.max(0,parseFloat(gmn.value)||0); save(); render(); };
   // Rétrocession
   document.querySelectorAll('[data-retrodate]').forEach(inp=>inp.onchange=()=>{
     const dt=inp.dataset.retrodate, v=Math.max(0, parseFloat(inp.value)||0);
