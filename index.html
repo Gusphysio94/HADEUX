@@ -864,6 +864,8 @@ const DEFAULT_STATE = () => ({
 let S = load();
 let VIEW = 'dash';
 let DEP_FILTER = 'all';
+let DEP_SEARCH = '';      // recherche texte dans les dépenses — session
+let DEP_CAT = 'all';      // filtre catégorie dans les dépenses — session
 let REV_SUB = 'apercu';   // sous-onglet actif des Revenus : apercu | annuel | mensuel
 let MEAL_SUB = 'menu';    // sous-onglet actif des Repas : menu | recettes
 let MEAL_SLOT = 'soir';   // créneau planifié dans « Ma semaine » : soir | midi
@@ -1376,9 +1378,16 @@ function renderFoyer(){
 
 /* ---------- DÉPENSES ---------- */
 function renderDepenses(){
-  const list=S.expenses.filter(e=>inMonth(e.date))
+  const q=noAccent((DEP_SEARCH||'').trim());
+  const monthList=S.expenses.filter(e=>inMonth(e.date));
+  const usedCats=[...new Set(monthList.map(e=>e.categoryId))];
+  const list=monthList
     .filter(e=>DEP_FILTER==='all'?true:DEP_FILTER==='commune'?e.scope==='commune':DEP_FILTER==='perso'?e.scope==='perso':true)
+    .filter(e=>DEP_CAT==='all'?true:e.categoryId===DEP_CAT)
+    .filter(e=>!q || noAccent(e.label||'').includes(q) || noAccent(cat(e.categoryId).name).includes(q))
     .sort((a,b)=>b.date.localeCompare(a.date)||b.amount-a.amount);
+  const total=sum(list.map(e=>e.amount));
+  const filtering = q || DEP_FILTER!=='all' || DEP_CAT!=='all';
   return `<section class="view">
     <div class="toolbar">
       <div class="filters">
@@ -1391,7 +1400,16 @@ function renderDepenses(){
       </div>
       <input type="file" id="csvFile" accept=".csv,text/csv,text/plain" style="display:none">
     </div>
-    ${budgetsCard()}
+    <div class="card" style="margin-bottom:16px"><div style="display:flex;gap:10px;align-items:center;padding:14px 16px;flex-wrap:wrap">
+      <input type="search" id="depSearch" value="${esc(DEP_SEARCH||'')}" placeholder="🔍 Rechercher (libellé, catégorie…)" style="flex:1;min-width:180px;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)">
+      <select id="depCat" style="padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)">
+        <option value="all" ${DEP_CAT==='all'?'selected':''}>Toutes catégories</option>
+        ${S.categories.filter(c=>usedCats.includes(c.id)).map(c=>`<option value="${c.id}" ${DEP_CAT===c.id?'selected':''}>${c.e} ${esc(c.name)}</option>`).join('')}
+      </select>
+      ${filtering?`<button class="btn ghost sm" id="depClear">Réinitialiser</button>`:''}
+    </div>
+    ${filtering?`<div style="padding:0 16px 12px;font-size:12.5px;color:var(--muted)">${list.length} résultat${list.length>1?'s':''} · total ${EUR(total)}</div>`:''}</div>
+    ${(!q&&DEP_CAT==='all')?budgetsCard():''}
     <div class="card">${expenseList(list)}</div>
   </section>`;
 }
@@ -2241,6 +2259,7 @@ function swapMeal(slot,i){
 
 // Clé de regroupement d'un ingrédient (accents, quantités et pluriels neutralisés)
 const COMBINING_MARKS = new RegExp('[\\u0300-\\u036f]','g');   // accents décomposés (NFD)
+function noAccent(s){ return String(s||'').normalize('NFD').replace(COMBINING_MARKS,'').toLowerCase(); }
 function ingKey(raw){
   return String(raw||'').toLowerCase()
     .normalize('NFD').replace(COMBINING_MARKS,'')        // accents
@@ -2501,6 +2520,20 @@ function renderReglages(){
         <div><div class="st">Personne</div><div class="sd">Nom affiché dans l'app</div></div>
         <input type="text" value="${esc(m.name)}" data-member="${m.id}">
       </div>`).join('')}
+    </div>
+
+    <div class="card">
+      <h2 class="title" style="padding-bottom:6px">Catégories de dépenses</h2>
+      <p class="sub-t">Personnalise emoji, nom et couleur. La suppression bascule les dépenses concernées en « Divers ».</p>
+      <div style="padding:12px 22px 6px;display:grid;gap:8px">
+        ${S.categories.map(c=>`<div style="display:flex;gap:8px;align-items:center">
+          <input type="text" value="${esc(c.e)}" data-cat-emoji="${c.id}" maxlength="2" style="width:46px;text-align:center;padding:9px 4px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)">
+          <input type="text" value="${esc(c.name)}" data-cat-name="${c.id}" style="flex:1;min-width:0;padding:9px 10px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)">
+          <input type="color" value="${c.c||'#9A8C6E'}" data-cat-color="${c.id}" style="width:40px;height:40px;flex:none;border:1px solid var(--line);border-radius:10px;background:none;padding:2px;cursor:pointer">
+          <button class="iconbtn danger" data-cat-del="${c.id}" title="Supprimer">✕</button>
+        </div>`).join('')}
+      </div>
+      <div style="padding:2px 22px 18px"><button class="btn ghost sm" id="catAdd"><span class="plus">+</span> Ajouter une catégorie</button></div>
     </div>
 
     <div class="card">
@@ -2875,6 +2908,9 @@ function wireModal(type){
 function wireView(){
   document.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>openModal(b.dataset.add));
   document.querySelectorAll('[data-filt]').forEach(b=>b.onclick=()=>{DEP_FILTER=b.dataset.filt;render();});
+  const dsearch=document.getElementById('depSearch'); if(dsearch) dsearch.oninput=()=>{ DEP_SEARCH=dsearch.value; render(); const el=document.getElementById('depSearch'); if(el){ el.focus(); const v=el.value; el.setSelectionRange(v.length,v.length); } };
+  const dcat=document.getElementById('depCat'); if(dcat) dcat.onchange=()=>{ DEP_CAT=dcat.value; render(); };
+  const dclear=document.getElementById('depClear'); if(dclear) dclear.onclick=()=>{ DEP_SEARCH=''; DEP_CAT='all'; DEP_FILTER='all'; render(); };
   document.querySelectorAll('[data-del-exp]').forEach(b=>b.onclick=()=>deleteWithUndo('expenses',b.dataset.delExp,'Dépense'));
   document.querySelectorAll('[data-del-inc]').forEach(b=>b.onclick=()=>deleteWithUndo('incomes',b.dataset.delInc,'Revenu'));
   document.querySelectorAll('[data-del-contr]').forEach(b=>b.onclick=()=>deleteWithUndo('contributions',b.dataset.delContr,'Versement'));
@@ -2920,6 +2956,23 @@ function wireView(){
     if(v>0) S.budgets[id]=v; else delete S.budgets[id];
     save(); render();
   });
+  // Catégories personnalisables
+  const catFind=id=>S.categories.find(c=>c.id===id);
+  document.querySelectorAll('[data-cat-emoji]').forEach(inp=>inp.onchange=()=>{ const c=catFind(inp.dataset.catEmoji); if(c){ c.e=inp.value.trim()||'🏷️'; save(); render(); } });
+  document.querySelectorAll('[data-cat-name]').forEach(inp=>inp.onchange=()=>{ const c=catFind(inp.dataset.catName); if(c){ c.name=inp.value.trim()||c.name; save(); render(); } });
+  document.querySelectorAll('[data-cat-color]').forEach(inp=>inp.onchange=()=>{ const c=catFind(inp.dataset.catColor); if(c){ c.c=inp.value; save(); render(); } });
+  document.querySelectorAll('[data-cat-del]').forEach(b=>b.onclick=()=>{
+    const id=b.dataset.catDel;
+    if(S.categories.length<=1){ toast('Garde au moins une catégorie.'); return; }
+    if(!confirm('Supprimer cette catégorie ? Les dépenses concernées passeront en « Divers ».')) return;
+    S.categories=S.categories.filter(c=>c.id!==id);
+    const fb=(S.categories.find(c=>c.id==='divers')||S.categories[0]).id;
+    S.expenses.forEach(e=>{ if(e.categoryId===id) e.categoryId=fb; });
+    S.recurrents.forEach(r=>{ if(r.categoryId===id) r.categoryId=fb; });
+    if(S.budgets) delete S.budgets[id];
+    save(); render(); toast('Catégorie supprimée');
+  });
+  const ca=document.getElementById('catAdd'); if(ca) ca.onclick=()=>{ S.categories.push({id:'c_'+uid(), name:'Nouvelle catégorie', e:'🏷️', c:'#9A8C6E'}); save(); render(); };
   // Rétrocession
   document.querySelectorAll('[data-retrodate]').forEach(inp=>inp.onchange=()=>{
     const dt=inp.dataset.retrodate, v=Math.max(0, parseFloat(inp.value)||0);
