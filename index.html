@@ -860,7 +860,7 @@ const DEFAULT_STATE = () => ({
     m2:{salaireBrut:0, recettes:0, fraisPro:0, statut:'complementaire', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false}
   },
   meals:{recipes:DEFAULT_RECIPES(), menus:{soir:[],midi:[]}, targets:{soir:7,midi:5}, checked:{},
-    pinned:[], extras:[], pantry:[], recent:[], filters:{maxTime:0,veggieOnly:false,exclude:''}, startDay:1, seededVersion:RECIPE_SEED_VERSION},
+    pinned:[], favorites:[], extras:[], pantry:[], recent:[], filters:{maxTime:0,veggieOnly:false,exclude:''}, startDay:1, seededVersion:RECIPE_SEED_VERSION},
   ui:{month:monthKey(todayISO())}, version:3
 });
 
@@ -872,7 +872,8 @@ let DEP_CAT = 'all';      // filtre catégorie dans les dépenses — session
 let REV_SUB = 'apercu';   // sous-onglet actif des Revenus : apercu | annuel | mensuel
 let MEAL_SUB = 'menu';    // sous-onglet actif des Repas : menu | recettes
 let MEAL_SLOT = 'soir';   // créneau planifié dans « Ma semaine » : soir | midi
-let MEAL_LIB = 'all';     // filtre de la bibliothèque de recettes : all | soir | midi
+let MEAL_LIB = 'all';     // filtre de la bibliothèque de recettes : all | soir | midi | fav
+let MEAL_SEARCH = '';     // recherche dans la bibliothèque de recettes — session
 let MEAL_OPEN = {};       // recetteId -> déplié (ingrédients/préparation) — session
 let MEAL_SHOW_PANTRY = false; // afficher le garde-manger — session
 let MEAL_DAYVIEW = false;  // vue par jour dans « Ma semaine » — session
@@ -932,6 +933,7 @@ function migrate(s){
   delete s.meals.menu; delete s.meals.targetEvenings;
   if(!s.meals.checked||typeof s.meals.checked!=='object') s.meals.checked={};
   if(!Array.isArray(s.meals.pinned)) s.meals.pinned=[];
+  if(!Array.isArray(s.meals.favorites)) s.meals.favorites=[];
   if(!Array.isArray(s.meals.extras)) s.meals.extras=[];
   if(!Array.isArray(s.meals.pantry)) s.meals.pantry=[];
   if(!Array.isArray(s.meals.recent)) s.meals.recent=[];
@@ -2298,6 +2300,7 @@ function generateMenu(slot, target){
       if(r.veggie && vegC>nonVegC) sc -= 0.7;                // équilibre global du ratio
       if(!r.veggie && nonVegC>vegC) sc -= 0.7;
       const ri=recent.indexOf(r.id); if(ri>=0) sc -= (ri<6?1.8:0.9);  // plats récemment servis défavorisés
+      if((S.meals.favorites||[]).includes(r.id)) sc += 1.1;           // favoris privilégiés
       if(sc>bestScore){ bestScore=sc; best=r; bestIdx=idx; }
     });
     chosen.push(best.id);
@@ -2449,21 +2452,29 @@ function renderRepas(){
   </div>`;
 
   if(sub==='recettes'){
-    const filt=MEAL_LIB;
-    const shown=recipes.filter(r=>filt==='all'?true:(r.meal||'soir')===filt);
+    const filt=MEAL_LIB, favs=S.meals.favorites||[];
+    const q=noAccent((MEAL_SEARCH||'').trim());
+    const shown=recipes
+      .filter(r=>filt==='all'?true:filt==='fav'?favs.includes(r.id):(r.meal||'soir')===filt)
+      .filter(r=>!q || noAccent(r.name).includes(q) || (r.ingredients||[]).some(i=>noAccent(i).includes(q)));
     const fbtn=(k,l)=>`<button class="filt ${filt===k?'on':''}" data-meallib="${k}">${l}</button>`;
     const lib=`<div class="toolbar">
-      <div class="filters">${fbtn('all','Toutes')}${fbtn('soir','🌙 Dîners')}${fbtn('midi','☀️ Déjeuners')}</div>
+      <div class="filters">${fbtn('all','Toutes')}${fbtn('soir','🌙 Dîners')}${fbtn('midi','☀️ Déjeuners')}${fbtn('fav','⭐ Favoris')}</div>
       <button class="btn primary sm" data-add="recette"><span class="plus">+</span> Nouvelle recette</button></div>
-      <div class="card">${shown.length?`<div class="list">${shown.map(r=>`<div class="row">
+      <div class="card" style="margin-bottom:16px"><div style="padding:12px 16px">
+        <input type="search" id="mealSearch" value="${esc(MEAL_SEARCH||'')}" placeholder="🔍 Rechercher un plat ou un ingrédient…" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)">
+      </div></div>
+      <div class="card">${shown.length?`<div class="list">${shown.map(r=>{ const isFav=favs.includes(r.id);
+        return `<div class="row">
         <div class="em">${r.emoji||'🍽️'}</div>
         <div class="main"><div class="l1">${esc(r.name)}</div>
           <div class="l2" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">${mealTags(r,true)}<span class="mealtag">${(r.ingredients||[]).length} ingr.</span></div></div>
+        <button class="iconbtn ${isFav?'pinned':''}" data-recfav="${r.id}" title="${isFav?'Retirer des favoris':'Favori'}">${isFav?'⭐':'☆'}</button>
         <button class="btn ghost sm" data-mealadd="${r.id}" title="Ajouter au menu">＋ Menu</button>
         <button class="iconbtn" data-recedit="${r.id}" title="Modifier">✎</button>
-      </div>`).join('')}</div>`
-      : emptyState('📖','Aucune recette','Ajoute une recette ou change de filtre.')}</div>
-      <div class="infoNote">✎ Modifie une recette (ingrédients, temps, midi/soir, végé/non-végé…) ou ajoutes-en : elles entrent aussitôt dans le générateur. ＋ Menu ajoute un plat au bon créneau.</div>`;
+      </div>`;}).join('')}</div>`
+      : emptyState('📖', q?'Aucun résultat':'Aucune recette', q?'Essaie un autre mot-clé.':'Ajoute une recette ou change de filtre.')}</div>
+      <div class="infoNote">⭐ Marque tes favoris : ils sont privilégiés lors de la génération de menus. ✎ Modifie une recette · ＋ Menu l'ajoute au bon créneau.</div>`;
     return `<section class="view grid">${hero}${subnav}${lib}</section>`;
   }
 
@@ -3136,6 +3147,8 @@ function wireView(){
   document.querySelectorAll('[data-mealdel]').forEach(b=>b.onclick=()=>{ S.meals.menus[MEAL_SLOT].splice(+b.dataset.mealdel,1); save(); render(); });
   document.querySelectorAll('[data-mealadd]').forEach(b=>b.onclick=()=>{ const r=recipeById(b.dataset.mealadd); if(!r) return; const sl=r.meal||'soir'; S.meals.menus[sl]=S.meals.menus[sl]||[]; S.meals.menus[sl].push(r.id); save(); render(); });
   document.querySelectorAll('[data-recedit]').forEach(b=>b.onclick=()=>{ const r=recipeById(b.dataset.recedit); if(r) openModal('recette',Object.assign({editId:r.id},JSON.parse(JSON.stringify(r)))); });
+  document.querySelectorAll('[data-recfav]').forEach(b=>b.onclick=()=>{ const id=b.dataset.recfav; const f=S.meals.favorites=S.meals.favorites||[]; const i=f.indexOf(id); if(i>=0)f.splice(i,1);else f.push(id); save(); render(); });
+  const msearch=document.getElementById('mealSearch'); if(msearch) msearch.oninput=()=>{ MEAL_SEARCH=msearch.value; render(); const el=document.getElementById('mealSearch'); if(el){ el.focus(); const v=el.value; el.setSelectionRange(v.length,v.length); } };
   const clrMenu=document.getElementById('clearMenu'); if(clrMenu) clrMenu.onclick=()=>{ if(confirm('Vider ce menu ?')){ S.meals.menus[MEAL_SLOT]=[]; save(); render(); } };
   const clrShop=document.getElementById('clearShop'); if(clrShop) clrShop.onclick=()=>{ S.meals.checked={}; save(); render(); };
   // Épingler / voir / réordonner
