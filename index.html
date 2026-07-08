@@ -441,6 +441,18 @@
   .field textarea{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;
     background:var(--surface2);font-family:inherit;font-size:15px;color:var(--ink);resize:vertical;outline:none;transition:.15s}
   .field textarea:focus{border-color:var(--green);background:var(--surface);box-shadow:0 0 0 3px var(--green-soft)}
+
+  /* Toasts (notifications + annulation) */
+  #toastHost{position:fixed;left:50%;transform:translateX(-50%);bottom:26px;z-index:80;
+    display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;width:max-content;max-width:92vw}
+  @media(max-width:640px){#toastHost{bottom:calc(92px + env(safe-area-inset-bottom))}}
+  .toast{pointer-events:auto;background:var(--ink);color:#F3EEE2;border-radius:100px;padding:11px 16px;
+    box-shadow:var(--shadow-lg);font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:14px;
+    opacity:0;transform:translateY(12px);transition:.24s cubic-bezier(.2,.8,.2,1)}
+  .toast.in{opacity:1;transform:none}
+  .toast.out{opacity:0;transform:translateY(12px)}
+  .toast-act{color:#F0C863;font-weight:700;font-size:13.5px;padding:2px 4px;white-space:nowrap}
+  .toast-act:hover{text-decoration:underline}
 </style>
 
 <div class="app">
@@ -924,8 +936,50 @@ function load(){
   return DEFAULT_STATE();
 }
 function save(){
+  snapshotMaybe();
   try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){ /* stockage indisponible : on garde en mémoire */ }
   cloudPush();   // synchro en ligne si activée (no-op sinon)
+}
+
+/* ---------- Sauvegardes automatiques locales (anti-perte de données) ---------- */
+const SNAP_KEY='hadeux_snapshots';
+function snapshotMaybe(){
+  try{
+    let snaps=JSON.parse(localStorage.getItem(SNAP_KEY)||'[]');
+    const today=todayISO();
+    const entry={date:today, ts:Date.now(), data:S};
+    if(snaps.length && snaps[snaps.length-1].date===today) snaps[snaps.length-1]=entry; // dernière version du jour
+    else snaps.push(entry);
+    localStorage.setItem(SNAP_KEY, JSON.stringify(snaps.slice(-10)));
+  }catch(e){}
+}
+function listSnapshots(){ try{ return JSON.parse(localStorage.getItem(SNAP_KEY)||'[]'); }catch(e){ return []; } }
+function restoreSnapshot(ts){
+  const s=listSnapshots().find(x=>String(x.ts)===String(ts)); if(!s) return;
+  S=migrate(JSON.parse(JSON.stringify(s.data))); save(); render(); toast('Sauvegarde restaurée ✓');
+}
+
+/* ---------- Toasts + annulation ---------- */
+function toast(msg,opts){
+  opts=opts||{};
+  let host=document.getElementById('toastHost');
+  if(!host){ host=document.createElement('div'); host.id='toastHost'; document.body.appendChild(host); }
+  const t=document.createElement('div'); t.className='toast';
+  const span=document.createElement('span'); span.textContent=msg; t.appendChild(span);
+  let done=false; const close=()=>{ if(done)return; done=true; t.classList.remove('in'); t.classList.add('out'); setTimeout(()=>t.remove(),260); };
+  if(opts.actionLabel){ const b=document.createElement('button'); b.className='toast-act'; b.textContent=opts.actionLabel;
+    b.onclick=()=>{ try{ opts.onAction&&opts.onAction(); }finally{ close(); } }; t.appendChild(b); }
+  host.appendChild(t);
+  requestAnimationFrame(()=>t.classList.add('in'));
+  setTimeout(close, opts.duration||4800);
+  return close;
+}
+function deleteWithUndo(arrName, id, label){
+  const arr=S[arrName]; if(!Array.isArray(arr)) return;
+  const idx=arr.findIndex(x=>x.id===id); if(idx<0) return;
+  const removed=arr[idx]; arr.splice(idx,1);
+  save(); render();
+  toast((label||'Élément')+' supprimé', {actionLabel:'Annuler', onAction:()=>{ const a=S[arrName]; a.splice(Math.min(idx,a.length),0,removed); save(); render(); }});
 }
 
 /* ============================================================
@@ -2151,7 +2205,7 @@ function swapMeal(slot,i){
   const menu=S.meals.menus[slot]||[];
   const used=new Set(menu);
   const cands=(S.meals.recipes||[]).filter(r=>(r.meal||'soir')===slot && !used.has(r.id));
-  if(!cands.length){ alert('Toutes tes recettes de ce créneau sont déjà dans le menu. Ajoute-en dans l’onglet « Recettes ».'); return; }
+  if(!cands.length){ toast('Toutes tes recettes de ce créneau sont déjà au menu.'); return; }
   // Préfère une protéine différente des plats voisins
   const cur=menu.map(recipeById).filter(Boolean);
   const neighbours=[cur[i-1],cur[i+1]].filter(Boolean).map(r=>detectProtein(r.ingredients||[]));
@@ -2448,6 +2502,8 @@ function renderReglages(){
         <button class="btn ghost sm" id="exportBtn">⬇ Exporter</button></div>
       <div class="setrow"><div><div class="st">Importer</div><div class="sd">Restaure une sauvegarde</div></div>
         <button class="btn ghost sm" id="importBtn">⬆ Importer</button><input type="file" id="importFile" accept="application/json" style="display:none"></div>
+      ${(()=>{ const snaps=listSnapshots().slice().reverse(); return `<div class="setrow"><div><div class="st">🕘 Sauvegardes automatiques</div><div class="sd">${snaps.length?`${snaps.length} point(s) locaux — restaure l'état d'un jour donné`:'Aucune pour l\'instant (créées automatiquement à l\'usage)'}</div></div>
+        ${snaps.length?`<div style="display:flex;gap:6px"><select id="snapSel" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2);font-size:13px">${snaps.map(s=>`<option value="${s.ts}">${new Date(s.ts).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})} ${new Date(s.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</option>`).join('')}</select><button class="btn ghost sm" id="snapRestore">Restaurer</button></div>`:''}</div>`; })()}
       <div class="setrow"><div><div class="st" style="color:var(--terra)">Tout effacer</div><div class="sd">Remet l'app à zéro</div></div>
         <button class="btn ghost sm" id="resetBtn" style="color:var(--terra)">Réinitialiser</button></div>
     </div>
@@ -2783,10 +2839,10 @@ function wireModal(type){
 function wireView(){
   document.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>openModal(b.dataset.add));
   document.querySelectorAll('[data-filt]').forEach(b=>b.onclick=()=>{DEP_FILTER=b.dataset.filt;render();});
-  document.querySelectorAll('[data-del-exp]').forEach(b=>b.onclick=()=>{if(confirm('Supprimer cette dépense ?')){S.expenses=S.expenses.filter(x=>x.id!==b.dataset.delExp);save();render();}});
-  document.querySelectorAll('[data-del-inc]').forEach(b=>b.onclick=()=>{if(confirm('Supprimer ce revenu ?')){S.incomes=S.incomes.filter(x=>x.id!==b.dataset.delInc);save();render();}});
-  document.querySelectorAll('[data-del-contr]').forEach(b=>b.onclick=()=>{if(confirm('Supprimer ce versement ?')){S.contributions=S.contributions.filter(x=>x.id!==b.dataset.delContr);save();render();}});
-  document.querySelectorAll('[data-del-rec]').forEach(b=>b.onclick=()=>{if(confirm('Supprimer cette charge récurrente ?')){S.recurrents=S.recurrents.filter(x=>x.id!==b.dataset.delRec);save();render();}});
+  document.querySelectorAll('[data-del-exp]').forEach(b=>b.onclick=()=>deleteWithUndo('expenses',b.dataset.delExp,'Dépense'));
+  document.querySelectorAll('[data-del-inc]').forEach(b=>b.onclick=()=>deleteWithUndo('incomes',b.dataset.delInc,'Revenu'));
+  document.querySelectorAll('[data-del-contr]').forEach(b=>b.onclick=()=>deleteWithUndo('contributions',b.dataset.delContr,'Versement'));
+  document.querySelectorAll('[data-del-rec]').forEach(b=>b.onclick=()=>deleteWithUndo('recurrents',b.dataset.delRec,'Charge'));
   const dup=document.getElementById('dupPrev'); if(dup) dup.onclick=copyRecurring;
   // profils fiscaux (onglets revenus)
   document.querySelectorAll('[data-prof]').forEach(inp=>{
@@ -2837,7 +2893,7 @@ function wireView(){
       R.cursorWeek=w; save(); render(); }
     else if(act==='valider'){ openModal('retroValider'); }
   });
-  document.querySelectorAll('[data-retrodel]').forEach(b=>b.onclick=()=>{ if(confirm('Supprimer ce décompte validé ?')){ S.retro.history=S.retro.history.filter(h=>h.month!==b.dataset.retrodel); save(); render(); } });
+  document.querySelectorAll('[data-retrodel]').forEach(b=>b.onclick=()=>{ const mk=b.dataset.retrodel; const idx=(S.retro.history||[]).findIndex(h=>h.month===mk); if(idx<0) return; const removed=S.retro.history[idx]; S.retro.history.splice(idx,1); save(); render(); toast('Décompte supprimé',{actionLabel:'Annuler',onAction:()=>{ S.retro.history.splice(idx,0,removed); save(); render(); }}); });
   // members rename
   document.querySelectorAll('[data-member]').forEach(inp=>inp.onchange=()=>{
     const m=member(inp.dataset.member); if(m){m.name=inp.value.trim()||m.name;save();render();}});
@@ -2848,6 +2904,7 @@ function wireView(){
   const pr1=document.getElementById('pdfRetroBtn'); if(pr1) pr1.onclick=exportReportRetro;
   const pr2=document.getElementById('pdfRetroBtn2'); if(pr2) pr2.onclick=exportReportRetro;
   const im=document.getElementById('importBtn'); if(im) im.onclick=()=>document.getElementById('importFile').click();
+  const snr=document.getElementById('snapRestore'); if(snr) snr.onclick=()=>{ const ts=document.getElementById('snapSel')?.value; if(ts && confirm('Restaurer cette sauvegarde ? L\'état actuel sera remplacé.')) restoreSnapshot(ts); };
   ['csvBtn','csvBtn2'].forEach(id=>{ const b=document.getElementById(id); if(b) b.onclick=()=>document.getElementById('csvFile').click(); });
   const cf=document.getElementById('csvFile'); if(cf) cf.onchange=startImportFile;
   if(VIEW==='import') wireImport();
@@ -2916,13 +2973,14 @@ function updateShopProgress(){
 function copyRecurring(){
   const prev=prevMonthKey(curMonth());
   const recs=S.expenses.filter(e=>monthKey(e.date)===prev && e.recurring);
-  if(!recs.length){alert('Aucune dépense récurrente le mois dernier à copier.');return;}
+  if(!recs.length){toast('Aucune dépense récurrente le mois dernier à copier.');return;}
+  let n=0;
   recs.forEach(e=>{
     const nd=curMonth()+'-'+String(Math.min(28,parseInt(e.date.slice(8))||1)).padStart(2,'0');
-    if(!S.expenses.some(x=>x.recurring&&x.label===e.label&&monthKey(x.date)===curMonth()&&x.amount===e.amount))
-      S.expenses.push({...e,id:uid(),date:nd});
+    if(!S.expenses.some(x=>x.recurring&&x.label===e.label&&monthKey(x.date)===curMonth()&&x.amount===e.amount)){
+      S.expenses.push({...e,id:uid(),date:nd}); n++; }
   });
-  save();render();
+  save();render(); toast(n?`${n} dépense(s) récurrente(s) copiée(s) ✓`:'Déjà à jour ce mois-ci.');
 }
 function prevMonthKey(mk){const[y,m]=mk.split('-').map(Number);return ymKey(new Date(y,m-2,1));}
 function shiftMonth(mk,delta){const[y,m]=mk.split('-').map(Number);return ymKey(new Date(y,m-1+delta,1));}
@@ -2939,7 +2997,7 @@ function printReport(html){
   document.body.classList.add('print-report');
   const cleanup=()=>{ document.body.classList.remove('print-report'); window.removeEventListener('afterprint',cleanup); };
   window.addEventListener('afterprint',cleanup);
-  setTimeout(()=>{ try{ window.print(); }catch(e){ cleanup(); alert('Impression indisponible ici. Ouvre le fichier dans ton navigateur pour générer le PDF.'); } }, 80);
+  setTimeout(()=>{ try{ window.print(); }catch(e){ cleanup(); toast('Impression indisponible ici. Ouvre l\'app dans ton navigateur.'); } }, 80);
 }
 function rpDate(){ return new Date(todayISO()+'T12:00').toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}); }
 
@@ -3034,7 +3092,7 @@ function exportReportRetro(){ printReport(buildReportRetro(todayISO().slice(0,4)
 function importData(e){
   const f=e.target.files[0];if(!f)return;
   const r=new FileReader();
-  r.onload=()=>{try{const s=JSON.parse(r.result);if(s.members&&s.expenses){S=s;S.ui=S.ui||{month:monthKey(todayISO())};save();render();alert('Données importées ✓');}else alert('Fichier invalide');}catch(err){alert('Fichier illisible');}};
+  r.onload=()=>{try{const s=JSON.parse(r.result);if(s.members&&s.expenses){S=migrate(s);save();render();toast('Données importées ✓');}else toast('Fichier invalide');}catch(err){toast('Fichier illisible');}};
   r.readAsText(f);
 }
 
@@ -3089,9 +3147,9 @@ function buildImportItems(){
   return items;
 }
 function startImportFile(e){ const f=e.target.files[0]; if(!f) return; const rd=new FileReader();
-  rd.onload=()=>{ try{ const rows=parseCSV(String(rd.result||'')); if(rows.length<2){alert('Fichier vide ou illisible.');return;}
+  rd.onload=()=>{ try{ const rows=parseCSV(String(rd.result||'')); if(rows.length<2){toast('Fichier vide ou illisible.');return;}
     const map=detectColumns(rows); IMPORT={filename:f.name,rows,map,account:'commun',items:[]}; IMPORT.items=buildImportItems(); VIEW='import'; render();
-  }catch(err){ alert('Impossible de lire ce fichier CSV.'); } };
+  }catch(err){ toast('Impossible de lire ce fichier CSV.'); } };
   rd.readAsText(f); e.target.value='';
 }
 function doImport(){
@@ -3104,7 +3162,7 @@ function doImport(){
       categoryId:it.cat, scope, paidBy, owner: scope==='perso'?owner:null, recurring:false, src:'csv'});
     n++;
   });
-  save(); IMPORT=null; VIEW='depenses'; render(); alert(n+' dépense(s) importée(s) ✓');
+  save(); IMPORT=null; VIEW='depenses'; render(); toast(n+' dépense(s) importée(s) ✓');
 }
 function renderImport(){
   if(!IMPORT) return renderDash();
