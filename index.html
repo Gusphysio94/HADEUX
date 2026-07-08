@@ -1077,17 +1077,35 @@ function compute(){
   const totalPerso   = sum(perso.map(e=>e.amount));
   const totalExp     = totalCommune + totalPerso;
 
+  // Part de m1 sur une dépense commune (défaut 50/50)
+  const s1of=e=>{ const s=(e.split!=null?e.split:0.5); return Math.max(0,Math.min(1,s)); };
+  // Part de chacun sur l'ensemble des dépenses communes (splits personnalisés pris en compte)
+  const partComm={}; S.members.forEach(m=>partComm[m.id]=0);
+  commune.forEach(e=>{ const s1=s1of(e); partComm[m1.id]+=e.amount*s1; partComm[m2.id]+=e.amount*(1-s1); });
+
   // Compte commun : dépenses payées PAR le compte commun
-  const potDepenses = sum(commune.filter(e=>e.paidBy==='commun').map(e=>e.amount));
+  const potCommune = commune.filter(e=>e.paidBy==='commun');
+  const potDepenses = sum(potCommune.map(e=>e.amount));
   const versements = {}; S.members.forEach(m=>versements[m.id]=0);
   contr.forEach(c=>{ if(versements[c.memberId]!=null) versements[c.memberId]+=c.amount; });
   const totalVersements = sum(Object.values(versements));
   const potBalance = totalVersements - potDepenses; // solde du compte commun (ce mois)
   const partPot = potDepenses/2;
+  // Part due par chacun sur ce que le compte commun a payé (selon les splits)
+  const dueShare={}; S.members.forEach(m=>dueShare[m.id]=0);
+  potCommune.forEach(e=>{ const s1=s1of(e); dueShare[m1.id]+=e.amount*s1; dueShare[m2.id]+=e.amount*(1-s1); });
 
   // Avances : dépenses communes payées de la poche de chacun
   const advance = {}; S.members.forEach(m=>advance[m.id]=0);
-  commune.filter(e=>e.paidBy!=='commun').forEach(e=>{ if(advance[e.paidBy]!=null) advance[e.paidBy]+=e.amount; });
+  const advCommune = commune.filter(e=>e.paidBy!=='commun');
+  advCommune.forEach(e=>{ if(advance[e.paidBy]!=null) advance[e.paidBy]+=e.amount; });
+  // Ce que chacun doit à l'autre pour les avances (selon les splits)
+  let oweM2toM1=0, oweM1toM2=0;
+  advCommune.forEach(e=>{ const s1=s1of(e);
+    if(e.paidBy===m1.id) oweM2toM1 += e.amount*(1-s1);   // part de m2, avancée par m1
+    else if(e.paidBy===m2.id) oweM1toM2 += e.amount*s1;  // part de m1, avancée par m2
+  });
+  const advanceNet = oweM2toM1 - oweM1toM2; // >0 : m2 doit à m1
 
   // Revenus & perso par personne
   const income={}, persoBy={};
@@ -1097,20 +1115,16 @@ function compute(){
 
   const totalIncome = sum(Object.values(income));
 
-  // Règlement compte commun : chacun doit partPot
-  const dueToPot = {}; S.members.forEach(m=>dueToPot[m.id]=partPot - versements[m.id]); // >0 : doit verser
+  // Règlement compte commun : chacun doit sa part
+  const dueToPot = {}; S.members.forEach(m=>dueToPot[m.id]=dueShare[m.id] - versements[m.id]); // >0 : doit verser
 
-  // Règlement avances : l'autre doit 50% de ce que j'ai avancé
-  // net entre m1 et m2 : advance différentiel
-  const advanceNet = (advance[m1.id]-advance[m2.id])/2; // >0 : m2 doit à m1
-
-  // Position par personne : reste à vivre = revenus - perso - part communes(50%)
-  const partCommune = totalCommune/2;
-  const rest={}; S.members.forEach(m=>rest[m.id]=income[m.id]-persoBy[m.id]-partCommune);
+  // Position par personne : reste à vivre = revenus - perso - sa part des communes
+  const partCommune = totalCommune/2; // moyenne (compat)
+  const rest={}; S.members.forEach(m=>rest[m.id]=income[m.id]-persoBy[m.id]-partComm[m.id]);
 
   return {m1,m2,exp,inc,contr,commune,perso,totalCommune,totalPerso,totalExp,
-    potDepenses,versements,totalVersements,potBalance,partPot,advance,advanceNet,
-    income,persoBy,totalIncome,dueToPot,partCommune,rest,
+    potDepenses,versements,totalVersements,potBalance,partPot,dueShare,advance,advanceNet,
+    income,persoBy,totalIncome,dueToPot,partCommune,partComm,rest,
     epargne: totalIncome-totalExp};
 }
 const sum = a => a.reduce((s,x)=>s+(+x||0),0);
@@ -1221,7 +1235,10 @@ function settlementHero(d){
     }
   }else{
     headline=`Pour être à l'équilibre ce mois-ci&nbsp;:`;
-    sub=`Dépenses communes du mois : ${EUR(d.totalCommune)} — soit ${EUR(d.partCommune)} par personne.`;
+    const even = Math.abs(d.partComm[d.m1.id]-d.partComm[d.m2.id])<0.5;
+    sub= even
+      ? `Dépenses communes du mois : ${EUR(d.totalCommune)} — soit ${EUR(d.partComm[d.m1.id])} par personne.`
+      : `Dépenses communes : ${EUR(d.totalCommune)} — part ${esc(d.m1.name)} ${EUR(d.partComm[d.m1.id])} · part ${esc(d.m2.name)} ${EUR(d.partComm[d.m2.id])}.`;
   }
   return `<div class="card hero">
     <div class="eyebrow">Le point du mois</div>
@@ -1268,7 +1285,7 @@ function splitDonut(d){
 }
 
 function personCard(d,m){
-  const pers=d.persoBy[m.id], part=d.partCommune;
+  const pers=d.persoBy[m.id], part=d.partComm[m.id];
   // Si le profil fiscal est rempli, on utilise le NET mensuel estimé (après impôts & cotisations),
   // sinon on retombe sur les revenus bruts saisis manuellement pour le mois.
   const fisc=computePerson(m.id);
@@ -1406,12 +1423,15 @@ function budgetsCard(){
 
 function expenseList(list){
   if(!list.length) return emptyState('🧾','Aucune dépense','Ajoute ta première dépense du mois.');
+  const m1=S.members[0];
   return `<div class="list">${list.map(e=>{
     const c=cat(e.categoryId);
     let meta;
     if(e.scope==='commune'){
       meta = e.paidBy==='commun' ? `<span class="tag pot">Compte commun</span>`
         : `<span class="tag commune">Commune</span> avancée par ${esc(member(e.paidBy)?.name||'?')}`;
+      const s1=(e.split!=null?e.split:0.5);
+      if(Math.abs(s1-0.5)>0.001){ const p=Math.round(s1*100); meta+=` · <span style="color:var(--muted)">${esc(m1.name)} ${p}%</span>`; }
     }else{
       meta = `<span class="tag perso">Perso</span> ${esc(member(e.owner||e.paidBy)?.name||'')}`;
     }
@@ -1422,6 +1442,7 @@ function expenseList(list){
         <div class="l2">${fmtDate(e.date)} · ${meta}</div>
       </div>
       <div class="amt">${EUR(e.amount)}</div>
+      <button class="iconbtn" data-edit-exp="${e.id}" title="Modifier">✎</button>
       <button class="del" data-del-exp="${e.id}" title="Supprimer">✕</button>
     </div>`;}).join('')}</div>`;
 }
@@ -1837,6 +1858,7 @@ function monthlyIncomeList(mid){
     <div class="em">💰</div><div class="main"><div class="l1">${esc(i.label||'Revenu')}</div>
     <div class="l2">${fmtDate(i.date)} · ${i.kind==='indep'?'Indépendant':'Salaire'}</div></div>
     <div class="amt pos">${EUR(i.amount)}</div>
+    <button class="iconbtn" data-edit-inc="${i.id}" title="Modifier">✎</button>
     <button class="del" data-del-inc="${i.id}">✕</button></div>`).join('')}</div>`;
 }
 function shade(hex,pct){
@@ -2035,6 +2057,7 @@ function renderPrevu(){
           <div class="main"><div class="l1">${esc(x.label||c.name)}</div>
           <div class="l2">${EUR(x.amount)} · ${freqLabel(x.freq)} · ${tag}${x.nextDue?` · ⏰ ${(nextOccurrence(x)||new Date()).toLocaleDateString('fr-FR',{day:'numeric',month:'short'})}`:''}</div></div>
           <div style="text-align:right"><div class="amt" style="color:var(--green)">${EUR(mensuel)}</div><div style="font-size:11px;color:var(--muted)">/mois</div></div>
+          <button class="iconbtn" data-edit-rec="${x.id}" title="Modifier">✎</button>
           <button class="del" data-del-rec="${x.id}">✕</button></div>`;
       }).join('')}</div>`
       : emptyState('🗓','Aucune charge récurrente','Ajoute tes assurances, abonnements, taxes annuelles… et l\'app les mensualise.')}
@@ -2111,7 +2134,7 @@ function renderCommun(){
 
     <div class="card">
       <h2 class="title">Qui doit combien au compte commun&nbsp;?</h2>
-      <p class="sub-t">Part de chacun sur les charges payées par le compte : ${EUR(d.partPot)}</p>
+      <p class="sub-t">Charges payées par le compte : ${EUR(d.potDepenses)} — réparties selon chaque dépense</p>
       <div class="list">
         ${S.members.map(m=>{
           const due=d.dueToPot[m.id];
@@ -2120,7 +2143,7 @@ function renderCommun(){
             : `<span class="pos">à jour ✓</span>`;
           return `<div class="row"><div class="em" style="background:${m.color}22;border-color:${m.color}55">👤</div>
             <div class="main"><div class="l1">${esc(m.name)}</div>
-            <div class="l2">A versé ${EUR(d.versements[m.id])} · part due ${EUR(d.partPot)}</div></div>
+            <div class="l2">A versé ${EUR(d.versements[m.id])} · part due ${EUR(d.dueShare[m.id])}</div></div>
             <div class="amt" style="font-size:15px">${st}</div></div>`;
         }).join('')}
       </div>
@@ -2133,6 +2156,7 @@ function renderCommun(){
         <div class="em">💸</div><div class="main"><div class="l1">${esc(c.label||'Versement')}</div>
         <div class="l2">${fmtDate(c.date)} · ${esc(member(c.memberId)?.name||'')}</div></div>
         <div class="amt pos">${EUR(c.amount)}</div>
+        <button class="iconbtn" data-edit-contr="${c.id}" title="Modifier">✎</button>
         <button class="del" data-del-contr="${c.id}">✕</button></div>`).join('')}</div>`
       : emptyState('◈','Aucun versement','Note ici ce que chacun vire sur le compte commun.')}
     </div>
@@ -2569,60 +2593,72 @@ function openModal(type,preset){
 function closeModal(){document.getElementById('overlay').classList.remove('show');}
 
 function formDepense(){
-  return `<div class="mhead"><h2>Nouvelle dépense</h2><button class="x" data-close>✕</button></div>
+  const d=modalDraft, editing=!!d.editId;
+  const m1=S.members[0], m2=S.members[1];
+  const scope=d.scope||'commune';
+  const paidBy=d.paidBy||(scope==='perso'?(d.memberId||m1.id):'commun');
+  const splitPct=Math.round((d.split!=null?d.split:0.5)*100);
+  const payerBtns = scope==='perso'
+    ? S.members.map(m=>`<button type="button" data-pay="${m.id}" class="${paidBy===m.id?'on':''}">${esc(m.name)}</button>`).join('')
+    : `<button type="button" data-pay="commun" class="${paidBy==='commun'?'on':''}">◈ Compte commun</button>`+S.members.map(m=>`<button type="button" data-pay="${m.id}" class="${paidBy===m.id?'on':''}">${esc(m.name)}</button>`).join('');
+  return `<div class="mhead"><h2>${editing?'Modifier la dépense':'Nouvelle dépense'}</h2><button class="x" data-close>✕</button></div>
   <form id="frm">
     <div class="field amount-input"><label>Montant</label>
-      <input type="number" step="0.01" min="0" id="f_amount" data-focus placeholder="0" required>
+      <input type="number" step="0.01" min="0" id="f_amount" data-focus value="${d.amount||''}" placeholder="0" required>
       <span class="cur">€</span></div>
     <div class="field"><label>Type de dépense</label>
       <div class="seg" id="segScope">
-        <button type="button" data-scope="commune" class="on">👫 Commune (50/50)</button>
-        <button type="button" data-scope="perso">👤 Perso</button>
+        <button type="button" data-scope="commune" class="${scope!=='perso'?'on':''}">👫 Commune</button>
+        <button type="button" data-scope="perso" class="${scope==='perso'?'on':''}">👤 Perso</button>
       </div></div>
-    <div class="field" id="payerField"><label>Payée par</label>
-      <div class="seg" id="segPayer">
-        <button type="button" data-pay="commun" class="on">◈ Compte commun</button>
-        ${S.members.map(m=>`<button type="button" data-pay="${m.id}">${esc(m.name)}</button>`).join('')}
-      </div></div>
-    <div class="field"><label>Libellé <span style="font-weight:400;text-transform:none">(optionnel)</span></label>
-      <input type="text" id="f_label" placeholder="Ex : Courses Carrefour"></div>
-    <div class="field"><label>Catégorie</label>
-      <div class="catgrid" id="catGrid">${S.categories.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===modalDraft.categoryId?'on':''}"><span class="e">${c.e}</span>${esc(c.name)}</button>`).join('')}</div></div>
-    <div class="field two">
-      <div class="field"><label>Date</label><input type="date" id="f_date" value="${todayISO()}"></div>
-      <div class="field"><label>Récurrent&nbsp;?</label>
-        <select id="f_rec"><option value="no">Ponctuel</option><option value="yes">Chaque mois (↻)</option></select></div>
+    <div class="field" id="payerField"><label>${scope==='perso'?'Dépense de':'Payée par'}</label>
+      <div class="seg" id="segPayer">${payerBtns}</div></div>
+    <div class="field" id="splitField" style="display:${scope==='perso'?'none':'block'}">
+      <label>Part de ${esc(m1.name)} sur cette dépense</label>
+      <div class="amount-input"><input type="number" id="f_split" min="0" max="100" step="5" value="${splitPct}" style="font-size:16px;padding:10px 34px 10px 12px"><span class="cur" style="font-size:14px">%</span></div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px" id="splitHint">${splitPct} % pour ${esc(m1.name)}, ${100-splitPct} % pour ${esc(m2.name)}. 50 % = partage classique.</div>
     </div>
-    <button class="btn primary savebtn" type="submit">Enregistrer la dépense</button>
+    <div class="field"><label>Libellé <span style="font-weight:400;text-transform:none">(optionnel)</span></label>
+      <input type="text" id="f_label" value="${esc(d.label||'')}" placeholder="Ex : Courses Carrefour"></div>
+    <div class="field"><label>Catégorie</label>
+      <div class="catgrid" id="catGrid">${S.categories.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===d.categoryId?'on':''}"><span class="e">${c.e}</span>${esc(c.name)}</button>`).join('')}</div></div>
+    <div class="field two">
+      <div class="field"><label>Date</label><input type="date" id="f_date" value="${d.date||todayISO()}"></div>
+      <div class="field"><label>Récurrent&nbsp;?</label>
+        <select id="f_rec"><option value="no" ${!d.recurring?'selected':''}>Ponctuel</option><option value="yes" ${d.recurring?'selected':''}>Chaque mois (↻)</option></select></div>
+    </div>
+    <button class="btn primary savebtn" type="submit">${editing?'Enregistrer les modifications':'Enregistrer la dépense'}</button>
   </form>`;
 }
 function formRevenu(){
-  modalDraft.kind=modalDraft.kind||'salaire';
-  return `<div class="mhead"><h2>Entrée d'argent</h2><button class="x" data-close>✕</button></div>
+  const d=modalDraft, editing=!!d.editId;
+  d.kind=d.kind||'salaire';
+  return `<div class="mhead"><h2>${editing?'Modifier l\'entrée':'Entrée d\'argent'}</h2><button class="x" data-close>✕</button></div>
   <form id="frm">
     <div class="field amount-input"><label>Montant</label>
-      <input type="number" step="0.01" min="0" id="f_amount" data-focus placeholder="0" required><span class="cur">€</span></div>
+      <input type="number" step="0.01" min="0" id="f_amount" data-focus value="${d.amount||''}" placeholder="0" required><span class="cur">€</span></div>
     <div class="field"><label>Pour qui&nbsp;?</label>
-      <div class="seg" id="segMember">${S.members.map(m=>`<button type="button" data-mem="${m.id}" class="${m.id===modalDraft.memberId?'on':''}">${esc(m.name)}</button>`).join('')}</div></div>
+      <div class="seg" id="segMember">${S.members.map(m=>`<button type="button" data-mem="${m.id}" class="${m.id===d.memberId?'on':''}">${esc(m.name)}</button>`).join('')}</div></div>
     <div class="field"><label>Type d'entrée</label>
       <div class="seg" id="segKind">
-        <button type="button" data-kind="salaire" class="${modalDraft.kind==='salaire'?'on':''}">💼 Salaire</button>
-        <button type="button" data-kind="indep" class="${modalDraft.kind==='indep'?'on':''}">🩺 Indépendant</button>
+        <button type="button" data-kind="salaire" class="${d.kind==='salaire'?'on':''}">💼 Salaire</button>
+        <button type="button" data-kind="indep" class="${d.kind==='indep'?'on':''}">🩺 Indépendant</button>
       </div></div>
-    <div class="field"><label>Libellé</label><input type="text" id="f_label" placeholder="Ex : Salaire de mars"></div>
+    <div class="field"><label>Libellé</label><input type="text" id="f_label" value="${esc(d.label||'')}" placeholder="Ex : Salaire de mars"></div>
     <div class="field two">
-      <div class="field"><label>Date</label><input type="date" id="f_date" value="${todayISO()}"></div>
-      <div class="field"><label>Récurrent&nbsp;?</label><select id="f_rec"><option value="no">Ponctuel</option><option value="yes">Chaque mois (↻)</option></select></div>
+      <div class="field"><label>Date</label><input type="date" id="f_date" value="${d.date||todayISO()}"></div>
+      <div class="field"><label>Récurrent&nbsp;?</label><select id="f_rec"><option value="no" ${!d.recurring?'selected':''}>Ponctuel</option><option value="yes" ${d.recurring?'selected':''}>Chaque mois (↻)</option></select></div>
     </div>
-    <button class="btn primary savebtn" type="submit">Enregistrer</button>
+    <button class="btn primary savebtn" type="submit">${editing?'Enregistrer':'Enregistrer'}</button>
   </form>`;
 }
 function formRecurrent(){
-  modalDraft.freq=modalDraft.freq||12; modalDraft.scope=modalDraft.scope||'commune';
-  return `<div class="mhead"><h2>Charge récurrente</h2><button class="x" data-close>✕</button></div>
+  const d=modalDraft, editing=!!d.editId;
+  d.freq=d.freq||12; d.scope=d.scope||'commune';
+  return `<div class="mhead"><h2>${editing?'Modifier la charge':'Charge récurrente'}</h2><button class="x" data-close>✕</button></div>
   <form id="frm">
     <div class="field amount-input"><label>Montant (par paiement)</label>
-      <input type="number" step="0.01" min="0" id="f_amount" data-focus placeholder="0" required><span class="cur">€</span></div>
+      <input type="number" step="0.01" min="0" id="f_amount" data-focus value="${d.amount||''}" placeholder="0" required><span class="cur">€</span></div>
     <div class="field two">
       <div class="field"><label>Fréquence de paiement</label>
         <select id="f_freq">${FREQS.map(([v,l])=>`<option value="${v}" ${modalDraft.freq===v?'selected':''}>${l}</option>`).join('')}</select></div>
@@ -2636,22 +2672,23 @@ function formRecurrent(){
       </div></div>
     <div class="field" id="recOwnerField" style="display:${modalDraft.scope==='perso'?'block':'none'}"><label>Pour qui&nbsp;?</label>
       <div class="seg" id="segMember">${S.members.map(m=>`<button type="button" data-mem="${m.id}" class="${m.id===modalDraft.memberId?'on':''}">${esc(m.name)}</button>`).join('')}</div></div>
-    <div class="field"><label>Libellé</label><input type="text" id="f_label" placeholder="Ex : Assurance habitation"></div>
+    <div class="field"><label>Libellé</label><input type="text" id="f_label" value="${esc(modalDraft.label||'')}" placeholder="Ex : Assurance habitation"></div>
     <div class="field"><label>Catégorie</label>
       <div class="catgrid" id="catGrid">${S.categories.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===modalDraft.categoryId?'on':''}"><span class="e">${c.e}</span>${esc(c.name)}</button>`).join('')}</div></div>
-    <button class="btn primary savebtn" type="submit">Enregistrer la charge</button>
+    <button class="btn primary savebtn" type="submit">${editing?'Enregistrer les modifications':'Enregistrer la charge'}</button>
   </form>`;
 }
 function formVersement(){
-  return `<div class="mhead"><h2>Versement compte commun</h2><button class="x" data-close>✕</button></div>
+  const d=modalDraft, editing=!!d.editId;
+  return `<div class="mhead"><h2>${editing?'Modifier le versement':'Versement compte commun'}</h2><button class="x" data-close>✕</button></div>
   <form id="frm">
     <div class="field amount-input"><label>Montant</label>
-      <input type="number" step="0.01" min="0" id="f_amount" data-focus placeholder="0" required><span class="cur">€</span></div>
+      <input type="number" step="0.01" min="0" id="f_amount" data-focus value="${d.amount||''}" placeholder="0" required><span class="cur">€</span></div>
     <div class="field"><label>De la part de</label>
-      <div class="seg" id="segMember">${S.members.map((m,i)=>`<button type="button" data-mem="${m.id}" class="${i===0?'on':''}">${esc(m.name)}</button>`).join('')}</div></div>
-    <div class="field"><label>Libellé <span style="font-weight:400;text-transform:none">(optionnel)</span></label><input type="text" id="f_label" placeholder="Ex : Virement mensuel"></div>
-    <div class="field"><label>Date</label><input type="date" id="f_date" value="${todayISO()}"></div>
-    <button class="btn primary savebtn" type="submit">Enregistrer le versement</button>
+      <div class="seg" id="segMember">${S.members.map(m=>`<button type="button" data-mem="${m.id}" class="${m.id===(d.memberId||S.members[0].id)?'on':''}">${esc(m.name)}</button>`).join('')}</div></div>
+    <div class="field"><label>Libellé <span style="font-weight:400;text-transform:none">(optionnel)</span></label><input type="text" id="f_label" value="${esc(d.label||'')}" placeholder="Ex : Virement mensuel"></div>
+    <div class="field"><label>Date</label><input type="date" id="f_date" value="${d.date||todayISO()}"></div>
+    <button class="btn primary savebtn" type="submit">${editing?'Enregistrer les modifications':'Enregistrer le versement'}</button>
   </form>`;
 }
 function formRetroValider(){
@@ -2778,52 +2815,51 @@ function wireModal(type){
     const label=M.querySelector('#f_label')?.value.trim()||'';
     const date=M.querySelector('#f_date')?.value||todayISO();
     const recurring=M.querySelector('#f_rec')?.value==='yes';
+    const eid=modalDraft.editId;
+    const upd=(arr,rec)=>{ if(eid){ const x=arr.find(e=>e.id===eid); if(x) Object.assign(x,rec); } else arr.push(Object.assign({id:uid()},rec)); };
     if(type==='depense'){
       const scope=modalDraft.scope;
-      const paidBy=scope==='perso'?modalDraft.memberId:modalDraft.paidBy;
-      S.expenses.push({id:uid(),amount,label,date,categoryId:modalDraft.categoryId,scope,
-        paidBy: scope==='perso'?(modalDraft.memberId):modalDraft.paidBy,
-        owner: scope==='perso'?modalDraft.memberId:null, recurring});
+      upd(S.expenses,{amount,label,date,categoryId:modalDraft.categoryId,scope,
+        paidBy: scope==='perso'?modalDraft.memberId:modalDraft.paidBy,
+        owner: scope==='perso'?modalDraft.memberId:null, recurring,
+        split: scope==='commune'?(modalDraft.split!=null?modalDraft.split:0.5):null});
     }else if(type==='revenu'){
-      S.incomes.push({id:uid(),amount,label,date,memberId:modalDraft.memberId,kind:modalDraft.kind||'salaire',recurring});
+      upd(S.incomes,{amount,label,date,memberId:modalDraft.memberId,kind:modalDraft.kind||'salaire',recurring});
     }else if(type==='versement'){
-      S.contributions.push({id:uid(),amount,label,date,memberId:modalDraft.memberId});
+      upd(S.contributions,{amount,label,date,memberId:modalDraft.memberId});
     }else if(type==='recurrent'){
       const freq=parseInt(M.querySelector('#f_freq')?.value)||12;
       const scope=modalDraft.scope||'commune';
       const nextDue=M.querySelector('#f_nextdue')?.value||null;
-      S.recurrents.push({id:uid(),label,amount,freq,scope,categoryId:modalDraft.categoryId,
+      upd(S.recurrents,{label,amount,freq,scope,categoryId:modalDraft.categoryId,
         owner: scope==='perso'?modalDraft.memberId:null, nextDue});
     }
     save(); closeModal(); render();
+    if(eid) toast('Modifié ✓');
   };
-  // perso : le payeur = la personne. Réutilise segMember absent → on ajoute un choix
+  // Dépense : synchronise payeur + split selon le type (commune/perso)
   if(type==='depense'){
-    // Quand perso, il faut choisir la personne : on transforme payer field
-    const seg=M.querySelector('#segScope');
-    seg.addEventListener('click',()=>{
-      if(modalDraft.scope==='perso'){
-        const pf=M.querySelector('#payerField');
-        pf.style.display='block';
-        pf.querySelector('label').textContent='Dépense de';
-        pf.querySelector('#segPayer').innerHTML=S.members.map((m,i)=>`<button type="button" data-pay="${m.id}" class="${i===0?'on':''}">${esc(m.name)}</button>`).join('');
-        modalDraft.paidBy=S.members[0].id; modalDraft.memberId=S.members[0].id;
-        pf.querySelectorAll('#segPayer button').forEach(b=>b.onclick=()=>{
-          modalDraft.paidBy=b.dataset.pay; modalDraft.memberId=b.dataset.pay;
-          pf.querySelectorAll('#segPayer button').forEach(x=>x.classList.toggle('on',x===b));
-        });
+    const m1=S.members[0];
+    const syncPayer=()=>{
+      const pf=M.querySelector('#payerField'), sp=M.querySelector('#segPayer'), sf=M.querySelector('#splitField');
+      const scope=modalDraft.scope;
+      if(scope==='perso'){
+        pf.style.display='block'; pf.querySelector('label').textContent='Dépense de';
+        if(!S.members.some(m=>m.id===modalDraft.paidBy)) modalDraft.paidBy=modalDraft.memberId||m1.id;
+        modalDraft.memberId=modalDraft.paidBy;
+        sp.innerHTML=S.members.map(m=>`<button type="button" data-pay="${m.id}" class="${modalDraft.paidBy===m.id?'on':''}">${esc(m.name)}</button>`).join('');
+        if(sf) sf.style.display='none';
       }else{
-        const pf=M.querySelector('#payerField');
-        pf.querySelector('label').textContent='Payée par';
-        pf.querySelector('#segPayer').innerHTML=`<button type="button" data-pay="commun" class="on">◈ Compte commun</button>`+
-          S.members.map(m=>`<button type="button" data-pay="${m.id}">${esc(m.name)}</button>`).join('');
-        modalDraft.paidBy='commun';
-        pf.querySelectorAll('#segPayer button').forEach(b=>b.onclick=()=>{
-          modalDraft.paidBy=b.dataset.pay;
-          pf.querySelectorAll('#segPayer button').forEach(x=>x.classList.toggle('on',x===b));
-        });
+        pf.style.display='block'; pf.querySelector('label').textContent='Payée par';
+        if(modalDraft.paidBy!=='commun' && !S.members.some(m=>m.id===modalDraft.paidBy)) modalDraft.paidBy='commun';
+        sp.innerHTML=`<button type="button" data-pay="commun" class="${modalDraft.paidBy==='commun'?'on':''}">◈ Compte commun</button>`+S.members.map(m=>`<button type="button" data-pay="${m.id}" class="${modalDraft.paidBy===m.id?'on':''}">${esc(m.name)}</button>`).join('');
+        if(sf) sf.style.display='block';
       }
-    });
+      sp.querySelectorAll('button').forEach(b=>b.onclick=()=>{ modalDraft.paidBy=b.dataset.pay; if(modalDraft.scope==='perso') modalDraft.memberId=b.dataset.pay; sp.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); });
+    };
+    M.querySelectorAll('#segScope button').forEach(b=>b.addEventListener('click',syncPayer));
+    syncPayer();
+    const fs=M.querySelector('#f_split'); if(fs) fs.oninput=()=>{ const p=Math.max(0,Math.min(100,parseInt(fs.value)||0)); modalDraft.split=p/100; const h=M.querySelector('#splitHint'); if(h) h.textContent=`${p} % pour ${esc(m1.name)}, ${100-p} % pour ${esc(S.members[1].name)}.`; };
   }
   if(type==='recurrent'){
     if(!modalDraft.memberId) modalDraft.memberId=S.members[0].id;
@@ -2843,6 +2879,15 @@ function wireView(){
   document.querySelectorAll('[data-del-inc]').forEach(b=>b.onclick=()=>deleteWithUndo('incomes',b.dataset.delInc,'Revenu'));
   document.querySelectorAll('[data-del-contr]').forEach(b=>b.onclick=()=>deleteWithUndo('contributions',b.dataset.delContr,'Versement'));
   document.querySelectorAll('[data-del-rec]').forEach(b=>b.onclick=()=>deleteWithUndo('recurrents',b.dataset.delRec,'Charge'));
+  // Édition des entrées
+  document.querySelectorAll('[data-edit-exp]').forEach(b=>b.onclick=()=>{ const e=S.expenses.find(x=>x.id===b.dataset.editExp); if(!e) return;
+    openModal('depense',{editId:e.id, amount:e.amount, label:e.label, date:e.date, categoryId:e.categoryId, scope:e.scope, paidBy:e.paidBy, memberId:(e.scope==='perso'?(e.owner||e.paidBy):e.paidBy), split:(e.split!=null?e.split:0.5), recurring:!!e.recurring}); });
+  document.querySelectorAll('[data-edit-inc]').forEach(b=>b.onclick=()=>{ const i=S.incomes.find(x=>x.id===b.dataset.editInc); if(!i) return;
+    openModal('revenu',{editId:i.id, amount:i.amount, label:i.label, date:i.date, memberId:i.memberId, kind:i.kind||'salaire', recurring:!!i.recurring}); });
+  document.querySelectorAll('[data-edit-contr]').forEach(b=>b.onclick=()=>{ const c=S.contributions.find(x=>x.id===b.dataset.editContr); if(!c) return;
+    openModal('versement',{editId:c.id, amount:c.amount, label:c.label, date:c.date, memberId:c.memberId}); });
+  document.querySelectorAll('[data-edit-rec]').forEach(b=>b.onclick=()=>{ const x=S.recurrents.find(r=>r.id===b.dataset.editRec); if(!x) return;
+    openModal('recurrent',{editId:x.id, amount:x.amount, label:x.label, freq:x.freq, scope:x.scope, categoryId:x.categoryId, memberId:(x.owner||S.members[0].id), nextDue:x.nextDue||''}); });
   const dup=document.getElementById('dupPrev'); if(dup) dup.onclick=copyRecurring;
   // profils fiscaux (onglets revenus)
   document.querySelectorAll('[data-prof]').forEach(inp=>{
