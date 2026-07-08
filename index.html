@@ -479,6 +479,7 @@
         <button class="arrow" id="nextM">›</button>
         <span class="today" id="todayBtn">Aujourd'hui</span>
       </div>
+      <button class="gearbtn" id="bellBtn" title="Activité du foyer" aria-label="Activité" style="position:relative">🔔<span id="bellDot" style="display:none;position:absolute;top:-3px;right:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:100px;background:var(--terra);color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center">0</span></button>
       <button class="gearbtn" id="gearBtn" title="Réglages" aria-label="Réglages">⚙</button>
     </div>
   </header>
@@ -852,6 +853,7 @@ const DEFAULT_STATE = () => ({
   retro:{ rate:0.30, days:{}, cursorWeek:mondayOf(todayISO()), history:[], memberId:'m1' },
   fiscalYear:'2026',
   goal:{monthly:0},
+  activity:[],
   couple:{quotientConjugal:true},
   profils:{
     m1:{salaireBrut:0, recettes:0, fraisPro:0, statut:'principal', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false},
@@ -876,6 +878,9 @@ let MEAL_SHOW_PANTRY = false; // afficher le garde-manger — session
 let MEAL_DAYVIEW = false;  // vue par jour dans « Ma semaine » — session
 let MEAL_SHOW_FILTERS = false; // afficher les filtres de génération — session
 let POLE_SUB = {};        // dernier sous-onglet visité par pôle (session)
+let DEVICE_ME = '';       // identité de l'appareil (m1/m2) — local, non synchronisé
+try{ DEVICE_ME = localStorage.getItem('hadeux_device_me')||''; }catch(e){}
+const SEEN_KEY='hadeux_activity_seen';
 
 // Normalise/complète un état (utilisé au chargement local ET pour les données reçues du cloud)
 function migrate(s){
@@ -888,6 +893,7 @@ function migrate(s){
   s.fiscalYear = s.fiscalYear || '2026';
   if(!s.goal||typeof s.goal!=='object') s.goal={monthly:0};
   if(typeof s.goal.monthly!=='number') s.goal.monthly=0;
+  if(!Array.isArray(s.activity)) s.activity=[];
   s.couple = Object.assign({quotientConjugal:true}, s.couple||{});
   if(!s.budgets||typeof s.budgets!=='object') s.budgets={};
   if(!s.retro) s.retro={rate:0.30,days:{},cursorWeek:mondayOf(todayISO()),history:[]};
@@ -983,9 +989,28 @@ function deleteWithUndo(arrName, id, label){
   const arr=S[arrName]; if(!Array.isArray(arr)) return;
   const idx=arr.findIndex(x=>x.id===id); if(idx<0) return;
   const removed=arr[idx]; arr.splice(idx,1);
+  logActivity(`a supprimé ${(label||'un élément').toLowerCase()}${removed&&removed.amount?' · '+EUR(removed.amount):''}`);
   save(); render();
   toast((label||'Élément')+' supprimé', {actionLabel:'Annuler', onAction:()=>{ const a=S[arrName]; a.splice(Math.min(idx,a.length),0,removed); save(); render(); }});
 }
+
+/* ---------- Fil d'activité (vie à deux) ---------- */
+function logActivity(text){
+  if(!Array.isArray(S.activity)) S.activity=[];
+  S.activity.push({ts:Date.now(), who:DEVICE_ME||null, text});
+  if(S.activity.length>80) S.activity=S.activity.slice(-80);
+}
+function whoName(who){ return who ? (member(who)?.name||'Quelqu\'un') : 'Quelqu\'un'; }
+function timeAgo(ts){
+  const s=Math.max(0,Math.floor((Date.now()-ts)/1000));
+  if(s<60) return 'à l\'instant';
+  const m=Math.floor(s/60); if(m<60) return `il y a ${m} min`;
+  const h=Math.floor(m/60); if(h<24) return `il y a ${h} h`;
+  const d=Math.floor(h/24); if(d<7) return `il y a ${d} j`;
+  return new Date(ts).toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
+}
+function activitySeen(){ try{ return +(localStorage.getItem(SEEN_KEY)||0); }catch(e){ return 0; } }
+function unseenActivity(){ const seen=activitySeen(); return (S.activity||[]).filter(a=>a.ts>seen && a.who!==DEVICE_ME).length; }
 
 /* ============================================================
    SYNCHRO EN LIGNE (Supabase) — activée si CLOUD.url est renseigné.
@@ -1161,6 +1186,7 @@ function render(){
   const activePole = POLE_OF[VIEW]||'';
   const mb=document.getElementById('monthbar'); if(mb) mb.style.display = HIDE_MONTH.includes(VIEW)?'none':'';
   const gb=document.getElementById('gearBtn'); if(gb) gb.classList.toggle('active', VIEW==='reglages');
+  const bd=document.getElementById('bellDot'); if(bd){ const n=unseenActivity(); if(n>0){ bd.textContent=n>9?'9+':String(n); bd.style.display='flex'; } else bd.style.display='none'; }
   const fab=document.getElementById('fab'); if(fab) fab.style.display = ['repas','reglages','import'].includes(VIEW)?'none':'';
   // Barres de pôles (haut + bas)
   const topHtml=poleList().map(p=>`<button data-pole="${p.id}" class="${activePole===p.id?'active':''}"><span class="ic">${p.ic}</span> ${esc(p.label)}</button>`).join('');
@@ -2570,6 +2596,12 @@ function renderReglages(){
         <div><div class="st">Personne</div><div class="sd">Nom affiché dans l'app</div></div>
         <input type="text" value="${esc(m.name)}" data-member="${m.id}">
       </div>`).join('')}
+      <div class="setrow"><div><div class="st">Cet appareil est</div><div class="sd">Pour attribuer tes actions dans le fil d'activité 🔔 (réglage local à cet appareil)</div></div>
+        <select id="deviceMe" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)">
+          <option value="" ${!DEVICE_ME?'selected':''}>—</option>
+          ${S.members.map(m=>`<option value="${m.id}" ${DEVICE_ME===m.id?'selected':''}>${esc(m.name)}</option>`).join('')}
+        </select>
+      </div>
     </div>
 
     <div class="card">
@@ -2675,7 +2707,7 @@ let modalDraft={};
 function openModal(type,preset){
   modalDraft = Object.assign({scope:'commune',paidBy:'commun',categoryId:'courses',date:todayISO(),memberId:S.members[0].id,recurring:false},preset||{});
   const M=document.getElementById('modal');
-  M.innerHTML = ({depense:formDepense,revenu:formRevenu,versement:formVersement,recurrent:formRecurrent,retroValider:formRetroValider,recette:formRecette}[type])();
+  M.innerHTML = ({depense:formDepense,revenu:formRevenu,versement:formVersement,recurrent:formRecurrent,retroValider:formRetroValider,recette:formRecette,activite:formActivite}[type])();
   document.getElementById('overlay').classList.add('show');
   wireModal(type);
   setTimeout(()=>M.querySelector('input[data-focus]')?.focus(),120);
@@ -2798,6 +2830,21 @@ function formRetroValider(){
       <div class="r" style="border:none"><span class="lbl">Rétrocession (${(R.rate*100).toFixed(0)}%)</span><span class="v neg">${EUR(retro)}</span></div>
     </div>
     <button class="btn primary savebtn" id="retroConfirm" data-mk="${mk}" ${total<=0?'disabled style="opacity:.5"':''}>Confirmer le décompte de ${esc(mName)}</button>
+  </div>`;
+}
+
+function formActivite(){
+  const list=(S.activity||[]).slice().reverse();
+  try{ localStorage.setItem(SEEN_KEY, String(Date.now())); }catch(e){}
+  const meSet = !!DEVICE_ME;
+  return `<div class="mhead"><h2>Activité du foyer</h2><button class="x" data-close>✕</button></div>
+  <div style="padding:6px 20px 22px">
+    ${!meSet?`<div class="banner" style="margin-bottom:12px"><span class="i">👤</span><div>Indique qui utilise cet appareil dans <b>Réglages → Les personnes du foyer</b> pour bien attribuer les actions.</div></div>`:''}
+    ${list.length?`<div class="list" style="padding:0">${list.map(a=>{ const mine=a.who&&a.who===DEVICE_ME;
+      return `<div class="row"><div class="em">${mine?'🙂':'👤'}</div>
+        <div class="main"><div class="l1">${esc(whoName(a.who))} ${esc(a.text)}</div>
+        <div class="l2">${timeAgo(a.ts)}</div></div></div>`; }).join('')}</div>`
+    :'<div class="empty" style="padding:26px"><p>Aucune activité pour l\'instant. Les ajouts, modifications et suppressions apparaîtront ici.</p></div>'}
   </div>`;
 }
 
@@ -2924,6 +2971,8 @@ function wireModal(type){
       upd(S.recurrents,{label,amount,freq,scope,categoryId:modalDraft.categoryId,
         owner: scope==='perso'?modalDraft.memberId:null, nextDue});
     }
+    const tl={depense:'une dépense',revenu:'une entrée',versement:'un versement',recurrent:'une charge'}[type]||'une entrée';
+    logActivity(`${eid?'a modifié':'a ajouté'} ${tl} · ${EUR(amount)}${label?' ('+esc(label)+')':''}`);
     save(); closeModal(); render();
     if(eid) toast('Modifié ✓');
   };
@@ -3031,6 +3080,7 @@ function wireView(){
   });
   const ca=document.getElementById('catAdd'); if(ca) ca.onclick=()=>{ S.categories.push({id:'c_'+uid(), name:'Nouvelle catégorie', e:'🏷️', c:'#9A8C6E'}); save(); render(); };
   const gmn=document.getElementById('goalMonthly'); if(gmn) gmn.onchange=()=>{ S.goal.monthly=Math.max(0,parseFloat(gmn.value)||0); save(); render(); };
+  const dm=document.getElementById('deviceMe'); if(dm) dm.onchange=()=>{ DEVICE_ME=dm.value; try{ if(DEVICE_ME) localStorage.setItem('hadeux_device_me',DEVICE_ME); else localStorage.removeItem('hadeux_device_me'); }catch(e){} render(); toast('Appareil identifié ✓'); };
   // Rétrocession
   document.querySelectorAll('[data-retrodate]').forEach(inp=>inp.onchange=()=>{
     const dt=inp.dataset.retrodate, v=Math.max(0, parseFloat(inp.value)||0);
@@ -3381,6 +3431,7 @@ function wireImport(){
 
 /* ---------- Navigation ---------- */
 document.getElementById('gearBtn').onclick=()=>{ VIEW='reglages'; render(); };
+document.getElementById('bellBtn').onclick=()=>{ openModal('activite'); const bd=document.getElementById('bellDot'); if(bd) bd.style.display='none'; };
 document.getElementById('prevM').onclick=()=>{S.ui.month=shiftMonth(curMonth(),-1);save();render();};
 document.getElementById('nextM').onclick=()=>{S.ui.month=shiftMonth(curMonth(),1);save();render();};
 document.getElementById('todayBtn').onclick=()=>{S.ui.month=monthKey(todayISO());save();render();};
