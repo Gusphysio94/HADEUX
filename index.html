@@ -2294,16 +2294,30 @@ function renderCommun(){
 ============================================================ */
 function recipeById(id){ return (S.meals.recipes||[]).find(r=>r.id===id); }
 
-// Mode « Frigo » : classe TOUTES les recettes selon les ingrédients dont on dispose.
-function fridgeMatch(){
+// Mode « Frigo » : classe TOUTES les recettes selon les ingrédients dont on dispose
+// (frigo saisi + garde-manger « j'ai déjà »).
+function fridgeCtx(){
   const fridge=[...new Set((S.meals.fridge||[]).map(x=>ingKey(x)).filter(k=>k.length>=3))];
-  if(!fridge.length) return [];
-  const hitFor=k=> fridge.some(f=> k===f || k.includes(f) || f.includes(k));
-  return (S.meals.recipes||[]).map(r=>{
-    const ings=r.ingredients||[]; const matched=[], missing=[];
-    ings.forEach(raw=>{ (hitFor(ingKey(raw))?matched:missing).push(raw); });
-    return {r, matched, missing, n:matched.length, total:ings.length, ratio: ings.length?matched.length/ings.length:0};
-  }).filter(x=>x.n>0)
+  const pantry=new Set(S.meals.pantry||[]);
+  return {fridge, pantry};
+}
+function recipeFridge(r, ctx){
+  ctx=ctx||fridgeCtx();
+  const matched=[], missing=[]; let nFridge=0;
+  (r.ingredients||[]).forEach(raw=>{
+    const k=ingKey(raw);
+    const inFridge=ctx.fridge.some(f=> k===f || k.includes(f) || f.includes(k));
+    const inPantry=ctx.pantry.has(k);
+    if(inFridge||inPantry){ matched.push(raw); if(inFridge) nFridge++; } else missing.push(raw);
+  });
+  const total=(r.ingredients||[]).length;
+  return {r, matched, missing, n:matched.length, nFridge, total, ratio: total?matched.length/total:0};
+}
+function fridgeMatch(){
+  const ctx=fridgeCtx();
+  if(!ctx.fridge.length) return [];
+  return (S.meals.recipes||[]).map(r=>recipeFridge(r,ctx))
+    .filter(x=>x.nFridge>0)   // au moins un ingrédient réellement issu du frigo
     .sort((a,b)=> b.n-a.n || b.ratio-a.ratio || a.missing.length-b.missing.length);
 }
 
@@ -2321,10 +2335,12 @@ function recipePassesFilters(r){
 // - défavorise les plats des semaines RÉCENTES,
 // - respecte les FILTRES actifs,
 // - variété des protéines, alternance végé/non-végé, « ×2 jours » = 2 repas.
-function generateMenu(slot, target){
+function generateMenu(slot, target, opts){
+  opts=opts||{};
   const inSlot=r=>(r.meal||'soir')===slot;
   const pinned=S.meals.pinned||[];
   const recent=S.meals.recent||[];
+  const fctx = opts.fridgeBias ? fridgeCtx() : null;
   // Plats épinglés déjà dans ce créneau : on les garde tels quels
   const chosen=[...new Set((S.meals.menus[slot]||[]).filter(id=>pinned.includes(id) && recipeById(id) && inSlot(recipeById(id))))];
   const usedIds=new Set(chosen);
@@ -2344,6 +2360,7 @@ function generateMenu(slot, target){
       if(!r.veggie && nonVegC>vegC) sc -= 0.7;
       const ri=recent.indexOf(r.id); if(ri>=0) sc -= (ri<6?1.8:0.9);  // plats récemment servis défavorisés
       if((S.meals.favorites||[]).includes(r.id)) sc += 1.1;           // favoris privilégiés
+      if(fctx){ const fr=recipeFridge(r,fctx); sc += fr.ratio*3.5 + (fr.nFridge>0?0.6:-1.2); }  // biais frigo
       if(sc>bestScore){ bestScore=sc; best=r; bestIdx=idx; }
     });
     chosen.push(best.id);
@@ -2501,6 +2518,7 @@ function renderRepas(){
     const chips = fridge.length
       ? fridge.map((x,i)=>`<span class="fchip">${esc(x)}<button data-fridgedel="${i}" title="Retirer">✕</button></span>`).join('')
       : `<span style="color:var(--muted);font-size:13.5px">Aucun ingrédient pour l'instant.</span>`;
+    const pantryN=(S.meals.pantry||[]).length;
     const inputCard=`<div class="card"><div style="padding:16px 18px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input type="text" id="fridgeInput" placeholder="Ajoute un ingrédient (poulet, courgette…)" style="flex:1;min-width:180px;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)">
@@ -2508,6 +2526,10 @@ function renderRepas(){
         ${fridge.length?`<button class="btn ghost sm" id="fridgeClear">Vider</button>`:''}
       </div>
       <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:12px">${chips}</div>
+      ${results.length?`<div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn primary sm" id="fridgeGen"><span class="plus">🎲</span> Composer ma semaine avec ça</button>
+        <span style="font-size:12px;color:var(--muted)">Remplit dîners & déjeuners en priorisant ce que tu as${pantryN?` (+ ${pantryN} basique${pantryN>1?'s':''} du garde-manger)`:''}.</span>
+      </div>`:''}
     </div></div>`;
     const listCard = !fridge.length
       ? emptyState('🧊','Qu\'as-tu dans ton frigo&nbsp;?','Ajoute tes ingrédients : on te propose les plats réalisables parmi les '+ (S.meals.recipes||[]).length +' recettes.')
@@ -3237,6 +3259,13 @@ function wireView(){
   const fi=document.getElementById('fridgeInput'); if(fi) fi.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); fAdd(); } };
   const fcl=document.getElementById('fridgeClear'); if(fcl) fcl.onclick=()=>{ S.meals.fridge=[]; save(); render(); };
   document.querySelectorAll('[data-fridgedel]').forEach(b=>b.onclick=()=>{ S.meals.fridge.splice(+b.dataset.fridgedel,1); save(); render(); });
+  const fgen=document.getElementById('fridgeGen'); if(fgen) fgen.onclick=()=>{
+    S.meals.menus.soir=generateMenu('soir', S.meals.targets.soir||7, {fridgeBias:true});
+    S.meals.menus.midi=generateMenu('midi', S.meals.targets.midi||5, {fridgeBias:true});
+    const ids=[].concat(S.meals.menus.soir,S.meals.menus.midi);
+    S.meals.recent=[...ids, ...(S.meals.recent||[]).filter(id=>!ids.includes(id))].slice(0,24);
+    MEAL_SUB='menu'; MEAL_SLOT='soir'; save(); render(); toast('Menu composé à partir de ton frigo ✓');
+  };
   const clrMenu=document.getElementById('clearMenu'); if(clrMenu) clrMenu.onclick=()=>{ if(confirm('Vider ce menu ?')){ S.meals.menus[MEAL_SLOT]=[]; save(); render(); } };
   const clrShop=document.getElementById('clearShop'); if(clrShop) clrShop.onclick=()=>{ S.meals.checked={}; save(); render(); };
   // Épingler / voir / réordonner
