@@ -434,6 +434,14 @@
   .mealtag.veg{background:var(--green-soft);color:var(--green);border-color:#cfe0d5}
   .mealtag.nonveg{background:var(--terra-soft);color:var(--terra);border-color:#ecccbe}
   .mealtag.insp{background:#F3E9CF;color:#9A7B1E;border-color:#e7d4a3}
+  /* Mode Frigo */
+  .fchip{display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--line);
+    border-radius:100px;padding:5px 6px 5px 13px;font-size:13px;font-weight:600;color:var(--ink)}
+  .fchip button{width:20px;height:20px;border-radius:100px;display:grid;place-items:center;color:var(--muted);font-size:11px;transition:.12s}
+  .fchip button:hover{background:var(--terra-soft);color:var(--terra)}
+  .fmatch{font-size:11px;font-weight:800;color:var(--muted);background:var(--surface2);border:1px solid var(--line);
+    border-radius:100px;padding:1px 8px;vertical-align:middle;white-space:nowrap}
+  .fmatch.ok{color:var(--green);background:var(--green-soft);border-color:#cfe0d5}
   .iconbtn{color:var(--muted);width:32px;height:32px;border-radius:8px;font-size:15px;flex:none;
     display:grid;place-items:center;transition:.12s}
   .iconbtn:hover{background:var(--surface2);color:var(--ink)}
@@ -876,7 +884,7 @@ const DEFAULT_STATE = () => ({
     m2:{salaireBrut:0, recettes:0, fraisPro:0, statut:'complementaire', communal:0.07, enfants:0, va:[0,0,0,0], nouvelIndep:false}
   },
   meals:{recipes:DEFAULT_RECIPES(), menus:{soir:[],midi:[]}, targets:{soir:7,midi:5}, checked:{},
-    pinned:[], favorites:[], extras:[], pantry:[], recent:[], filters:{maxTime:0,veggieOnly:false,exclude:''}, startDay:1, seededVersion:RECIPE_SEED_VERSION},
+    pinned:[], favorites:[], extras:[], pantry:[], recent:[], fridge:[], filters:{maxTime:0,veggieOnly:false,exclude:''}, startDay:1, seededVersion:RECIPE_SEED_VERSION},
   ui:{month:monthKey(todayISO())}, version:3
 });
 
@@ -950,6 +958,7 @@ function migrate(s){
   if(!s.meals.checked||typeof s.meals.checked!=='object') s.meals.checked={};
   if(!Array.isArray(s.meals.pinned)) s.meals.pinned=[];
   if(!Array.isArray(s.meals.favorites)) s.meals.favorites=[];
+  if(!Array.isArray(s.meals.fridge)) s.meals.fridge=[];
   if(!Array.isArray(s.meals.extras)) s.meals.extras=[];
   if(!Array.isArray(s.meals.pantry)) s.meals.pantry=[];
   if(!Array.isArray(s.meals.recent)) s.meals.recent=[];
@@ -2285,6 +2294,19 @@ function renderCommun(){
 ============================================================ */
 function recipeById(id){ return (S.meals.recipes||[]).find(r=>r.id===id); }
 
+// Mode « Frigo » : classe TOUTES les recettes selon les ingrédients dont on dispose.
+function fridgeMatch(){
+  const fridge=[...new Set((S.meals.fridge||[]).map(x=>ingKey(x)).filter(k=>k.length>=3))];
+  if(!fridge.length) return [];
+  const hitFor=k=> fridge.some(f=> k===f || k.includes(f) || f.includes(k));
+  return (S.meals.recipes||[]).map(r=>{
+    const ings=r.ingredients||[]; const matched=[], missing=[];
+    ings.forEach(raw=>{ (hitFor(ingKey(raw))?matched:missing).push(raw); });
+    return {r, matched, missing, n:matched.length, total:ings.length, ratio: ings.length?matched.length/ings.length:0};
+  }).filter(x=>x.n>0)
+    .sort((a,b)=> b.n-a.n || b.ratio-a.ratio || a.missing.length-b.missing.length);
+}
+
 // Filtres de génération (temps max, végé only, ingrédients exclus)
 function recipePassesFilters(r){
   const f=S.meals.filters||{};
@@ -2469,8 +2491,44 @@ function renderRepas(){
 
   const subnav=`<div class="subnav">
     <button data-mealsub="menu" class="${sub==='menu'?'on':''}">🍲 Ma semaine</button>
+    <button data-mealsub="frigo" class="${sub==='frigo'?'on':''}">🧊 Frigo</button>
     <button data-mealsub="recettes" class="${sub==='recettes'?'on':''}">📖 Recettes</button>
   </div>`;
+
+  if(sub==='frigo'){
+    const fridge=S.meals.fridge||[];
+    const results=fridgeMatch();
+    const chips = fridge.length
+      ? fridge.map((x,i)=>`<span class="fchip">${esc(x)}<button data-fridgedel="${i}" title="Retirer">✕</button></span>`).join('')
+      : `<span style="color:var(--muted);font-size:13.5px">Aucun ingrédient pour l'instant.</span>`;
+    const inputCard=`<div class="card"><div style="padding:16px 18px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="fridgeInput" placeholder="Ajoute un ingrédient (poulet, courgette…)" style="flex:1;min-width:180px;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface2)">
+        <button class="btn ghost sm" id="fridgeAdd">＋ Ajouter</button>
+        ${fridge.length?`<button class="btn ghost sm" id="fridgeClear">Vider</button>`:''}
+      </div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:12px">${chips}</div>
+    </div></div>`;
+    const listCard = !fridge.length
+      ? emptyState('🧊','Qu\'as-tu dans ton frigo&nbsp;?','Ajoute tes ingrédients : on te propose les plats réalisables parmi les '+ (S.meals.recipes||[]).length +' recettes.')
+      : !results.length
+        ? emptyState('🤔','Aucune recette trouvée','Essaie d\'autres ingrédients (ou des termes plus simples : « poulet » plutôt que « filet de poulet »).')
+        : `<div class="card">
+            <div style="padding:18px 18px 2px"><h2 style="font-size:18px">Plats réalisables</h2>
+              <p class="sub-t" style="padding:2px 0 0">${results.length} recette${results.length>1?'s':''} triée${results.length>1?'s':''} par correspondance</p></div>
+            <div class="list">${results.slice(0,20).map(m=>{ const r=m.r, open=!!MEAL_OPEN[r.id]; const complete=m.missing.length===0;
+              const detail=open?`<div class="mealdetail"><div><b>Ingrédients :</b> ${(r.ingredients||[]).map(i=>esc(i)).join(', ')}</div>${r.steps?`<div style="margin-top:6px;white-space:pre-line"><b>Préparation :</b>\n${esc(r.steps)}</div>`:''}</div>`:'';
+              return `<div class="mealitem"><div class="row">
+                <div class="em">${r.emoji||'🍽️'}</div>
+                <div class="main"><div class="l1">${esc(r.name)} <span class="fmatch ${complete?'ok':''}">${m.n}/${m.total}</span></div>
+                  <div class="l2" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">${mealTags(r,true)}</div>
+                  ${m.missing.length?`<div class="l2" style="margin-top:5px">Il te manque : ${m.missing.slice(0,5).map(i=>esc(i)).join(', ')}${m.missing.length>5?'…':''}</div>`:`<div class="l2" style="margin-top:5px;color:var(--green);font-weight:600">Tu as tout ✓</div>`}</div>
+                <button class="iconbtn" data-mealopen="${r.id}" title="Voir la recette">${open?'▴':'▾'}</button>
+                <button class="btn ghost sm" data-mealadd="${r.id}" title="Ajouter au menu">＋ Menu</button>
+              </div>${detail}</div>`; }).join('')}</div>
+          </div>`;
+    return `<section class="view grid">${hero}${subnav}${inputCard}${listCard}</section>`;
+  }
 
   if(sub==='recettes'){
     const filt=MEAL_LIB, favs=S.meals.favorites||[];
@@ -3171,6 +3229,14 @@ function wireView(){
   document.querySelectorAll('[data-recedit]').forEach(b=>b.onclick=()=>{ const r=recipeById(b.dataset.recedit); if(r) openModal('recette',Object.assign({editId:r.id},JSON.parse(JSON.stringify(r)))); });
   document.querySelectorAll('[data-recfav]').forEach(b=>b.onclick=()=>{ const id=b.dataset.recfav; const f=S.meals.favorites=S.meals.favorites||[]; const i=f.indexOf(id); if(i>=0)f.splice(i,1);else f.push(id); save(); render(); });
   const msearch=document.getElementById('mealSearch'); if(msearch) msearch.oninput=()=>{ MEAL_SEARCH=msearch.value; render(); const el=document.getElementById('mealSearch'); if(el){ el.focus(); const v=el.value; el.setSelectionRange(v.length,v.length); } };
+  // Mode Frigo
+  const fAdd=()=>{ const el=document.getElementById('fridgeInput'); const v=(el?.value||'').trim(); if(!v) return;
+    v.split(',').map(s=>s.trim()).filter(Boolean).forEach(t=>{ if(!(S.meals.fridge||[]).some(x=>x.toLowerCase()===t.toLowerCase())) (S.meals.fridge=S.meals.fridge||[]).push(t); });
+    save(); render(); const e2=document.getElementById('fridgeInput'); if(e2) e2.focus(); };
+  const fa=document.getElementById('fridgeAdd'); if(fa) fa.onclick=fAdd;
+  const fi=document.getElementById('fridgeInput'); if(fi) fi.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); fAdd(); } };
+  const fcl=document.getElementById('fridgeClear'); if(fcl) fcl.onclick=()=>{ S.meals.fridge=[]; save(); render(); };
+  document.querySelectorAll('[data-fridgedel]').forEach(b=>b.onclick=()=>{ S.meals.fridge.splice(+b.dataset.fridgedel,1); save(); render(); });
   const clrMenu=document.getElementById('clearMenu'); if(clrMenu) clrMenu.onclick=()=>{ if(confirm('Vider ce menu ?')){ S.meals.menus[MEAL_SLOT]=[]; save(); render(); } };
   const clrShop=document.getElementById('clearShop'); if(clrShop) clrShop.onclick=()=>{ S.meals.checked={}; save(); render(); };
   // Épingler / voir / réordonner
